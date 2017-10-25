@@ -1,4 +1,4 @@
-import torch
+import numpy as np
 class TripletBatchSampler(object):
     """Sampler to create batches with P x K.
         
@@ -19,16 +19,17 @@ class TripletBatchSampler(object):
     def __iter__(self):
         batch = []
 
-        P_perm = torch.randperm(len(self.target2idx))
+        P_perm = np.random.permutation(len(self.target2idx))
         for p in P_perm:
-            person = self.target2idx[p]
-            K_perm = torch.randperm(len(person))
-            if len(person) < self.K:
-                print("Warning: not enough images for person id %d (%d/%d)"
-                      % (p, len(person), self.K))
-                continue
+            images = self.target2idx[p]
+            K_perm = np.random.permutation(len(images))
+            # fill up by repeating the permutation
+            if len(images) < self.K:
+                K_perm = np.tile(K_perm, self.K//len(images))
+                left = self.K - len(K_perm)
+                K_perm = np.concatenate((K_perm, K_perm[:left]))
             for k in range(self.K):
-                batch.append(person[K_perm[k]])
+                batch.append(images[K_perm[k]])
         
             if len(batch) == self.batch_size:
                 yield batch
