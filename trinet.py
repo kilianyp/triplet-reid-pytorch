@@ -18,12 +18,15 @@ class TriNet(ResNet):
 
         super(TriNet, self).__init__(block, layers, 1) # 0 classes thows an error
 
+        batch_norm = nn.BatchNorm1d(1024)
         self.fc = nn.Sequential(
             nn.Linear(512 * block.expansion, 1024),
-            nn.BatchNorm2d(1024),
+            batch_norm,
             nn.ReLU(),
             nn.Linear(1024, 128)
         )
+        batch_norm.weight.data.fill_(1)
+        batch_norm.bias.data.zero_()
 
 
 def trinet(**kwargs):
