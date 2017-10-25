@@ -19,6 +19,7 @@ class TriNet(ResNet):
         super(TriNet, self).__init__(block, layers, 1) # 0 classes thows an error
 
         batch_norm = nn.BatchNorm1d(1024)
+        self.avgpool = nn.AvgPool2d((8,4))
         self.fc = nn.Sequential(
             nn.Linear(512 * block.expansion, 1024),
             batch_norm,
