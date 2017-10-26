@@ -1,8 +1,24 @@
 import numpy as np
+
+
+def create_pids2idxs(data_source):
+    """Creates a mapping between pids and indexes of images for that pid.
+    Returns:
+        2D List with pids => idx
+    """
+    pid2imgs = {}
+    for idx, (img, target) in enumerate(data_source.imgs):
+        if target not in pid2imgs:
+            pid2imgs[target] = [idx]
+        else:
+            pid2imgs[target].append(idx)
+    return list(pid2imgs.values())
+
+
 class TripletBatchSampler(object):
     """Sampler to create batches with P x K.
         
-        Only returns indices.
+       Only returns indices.
         
     """
     def __init__(self, P, K, data_source, drop_last=True):
@@ -12,16 +28,13 @@ class TripletBatchSampler(object):
         self.data_source = data_source
         self.drop_last = drop_last
 
-        # TODO create target2idx here?
-        self.target2idx = self.data_source.target2idx
-
+        self.pid2imgs = create_pids2idxs(self.data_source)
 
     def __iter__(self):
         batch = []
-
-        P_perm = np.random.permutation(len(self.target2idx))
+        P_perm = np.random.permutation(len(self.pid2imgs))
         for p in P_perm:
-            images = self.target2idx[p]
+            images = self.pid2imgs[p]
             K_perm = np.random.permutation(len(images))
             # fill up by repeating the permutation
             if len(images) < self.K:

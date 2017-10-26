@@ -3,7 +3,7 @@ import torch
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-from datasets.market import MarketDataset
+from csv_dataset import CsvDataset
 
 from triplet_sampler import TripletBatchSampler
 from trinet import trinet
@@ -17,9 +17,16 @@ import csv
 torch.backends.cudnn.benchmark = True
 
 
-root_dir = "."
-data_dir = "datasets"
-market_dir = os.path.join(root_dir, data_dir)
+log_dir = "."
+dataset = "market"
+
+data_config = {
+        "market": (
+            "~/Projects/cupsizes/data/market1501_train.csv",
+            "~/Projects/triplet-reid-pytorch/datasets/Market-1501/")}
+
+csv_file = data_config[dataset][0]
+data_dir = data_config[dataset][1]
 
 # hyperparameters
 pretrained = True,
@@ -49,11 +56,11 @@ else:
 
 # save
 
-save_dir = os.path.join(root_dir, "training")
-training_name = "%s-%s_%d-%d_%f_%d" % (loss_fn.name, str(margin), P, K, eps0, t1)
-if not os.path.isdir(save_dir):
-    os.mkdir(save_dir)
-log_dir = os.path.join(save_dir, training_name)
+log_dir = os.path.join(log_dir, "training")
+training_name = "%s_%s-%s_%d-%d_%f_%d" % (dataset, loss_fn.name, str(margin), P, K, eps0, t1)
+if not os.path.isdir(log_dir):
+    os.mkdir(log_dir)
+log_dir = os.path.join(log_dir, training_name)
 if not os.path.isdir(log_dir):
     os.mkdir(log_dir)
     print("Created new directory in %s" % log_dir)
@@ -65,14 +72,7 @@ train_transform = transforms.Compose([
         normalize
     ])
 
-test_transform = transforms.Compose([
-        transforms.Scale(256),
-        transforms.CenterCrop((H, W)),
-        transforms.ToTensor(),
-        normalize
-    ])
-
-train_dataset = MarketDataset(market_dir, transform=train_transform, test=False)
+train_dataset = CsvDataset(csv_file, data_dir, transform=train_transform)
 
 
 train_loader = torch.utils.data.DataLoader(
@@ -89,7 +89,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 def adjust_learning_rate(optimizer, t):
     if t <= t0:
         return
-    lr = eps0 * 0.001((t - t0) / (t1 - t0))
+    lr = eps0 * 0.001 * ((t - t0) / (t1 - t0))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -105,7 +105,7 @@ log_writer = csv.writer(log_h)
 
 
 while t <= t1:
-    for batch_id,(data, target) in enumerate(train_loader):
+    for batch_id, (data, target) in enumerate(train_loader):
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
         result = model(data)
