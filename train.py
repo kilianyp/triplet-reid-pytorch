@@ -25,8 +25,8 @@ data_config = {
             "~/Projects/cupsizes/data/market1501_train.csv",
             "~/Projects/triplet-reid-pytorch/datasets/Market-1501/")}
 
-csv_file = data_config[dataset][0]
-data_dir = data_config[dataset][1]
+csv_file = os.path.expanduser(data_config[dataset][0])
+data_dir = os.path.expanduser(data_config[dataset][1])
 
 # hyperparameters
 pretrained = True,
@@ -66,7 +66,8 @@ if not os.path.isdir(log_dir):
     print("Created new directory in %s" % log_dir)
 
 train_transform = transforms.Compose([
-    transforms.Scale((int(W*scale), int(H*scale))), # TODO old version?
+        transforms.RandomHorizontalFlip(),
+        transforms.Scale((int(W*scale), int(H*scale))), # TODO old version?
         transforms.RandomCrop((H, W)),
         transforms.ToTensor(),
         normalize
@@ -88,10 +89,11 @@ optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 
 def adjust_learning_rate(optimizer, t):
     if t <= t0:
-        return
-    lr = eps0 * 0.001 * ((t - t0) / (t1 - t0))
+        return eps0
+    lr = eps0 * pow(0.001, (t - t0) / (t1 - t0))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+    return lr
 
 
 def var2f(x):
@@ -113,10 +115,10 @@ while t <= t1:
         losses = loss_fn(result, target)
         loss_mean = torch.mean(losses)
         loss_f = var2f(loss_mean)
-        print("batch {} loss: {:.3f}|{:.3f}|{:.3f}".format(
+        lr = adjust_learning_rate(optimizer, t)
+        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f}".format(
             t,
-            var2f(torch.min(losses)), var2f(torch.max(losses)), loss_f))
-        adjust_learning_rate(optimizer, t)
+            var2f(torch.min(losses)), var2f(torch.max(losses)), loss_f, lr))
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
