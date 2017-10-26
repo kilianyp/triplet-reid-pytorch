@@ -67,7 +67,7 @@ if not os.path.isdir(log_dir):
 
 train_transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
-        transforms.Scale((int(W*scale), int(H*scale))), # TODO old version?
+        transforms.Resize((int(H*scale), int(W*scale))),
         transforms.RandomCrop((H, W)),
         transforms.ToTensor(),
         normalize
