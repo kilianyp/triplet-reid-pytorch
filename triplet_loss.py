@@ -38,7 +38,7 @@ class BatchHard(nn.Module):
         if isinstance(self.m, float):
             diff = (diff + self.m).clamp(min=0)
         elif self.m.lower() == "soft":
-            soft = torch.SoftPlus()
+            soft = torch.nn.Softplus()
             diff = soft(diff)
         elif self.m.lower() == "none":
             pass
