@@ -8,6 +8,7 @@ from trinet import trinet
 
 import os
 import h5py
+import sys
 
 from argparse import ArgumentParser
 
@@ -15,33 +16,27 @@ from argparse import ArgumentParser
 parser = ArgumentParser()
 
 parser.add_argument(
-        '--filename', default=None)
+        '--output_dir', default="embed",
+        help="Output directory for embedding hd5 file."
+        )
+parser.add_argument(
+        '--filename', default=None, 
+        help="Output filename")
 
-dataset = "market"
-data_config = {
-        "market": (
-            "~/Projects/cupsizes/data/market1501_query.csv",
-            "~/Projects/triplet-reid-pytorch/datasets/Market-1501/")}
+parser.add_argument(
+        '--csv_file', required=True,
+        help="CSV file containing relative paths.")
 
-csv_file = os.path.expanduser(data_config[dataset][0])
-data_dir = os.path.expanduser(data_config[dataset][1])
+parser.add_argument(
+        '--data_dir', required=True,
+        help="Root dir where the data is stored. This and the paths in the\
+        csv file have to result in the correct file path."
+        )
 
-
-model = trinet()
-state_dict_dir = "~/Projects/triplet-reid-pytorch/training/BatchHard-1.0_18-4_0.000300_25000/model_15000"
-state_dict_dir = os.path.expanduser(state_dict_dir)
-#restore trained model
-state_dict = torch.load(state_dict_dir)
-#print(state_dict.keys())
-
-#print(model.state_dict().keys())
-fresh_dict = {}
-for key, value in state_dict.items():
-    prefix = "module."
-    if key.startswith(prefix):
-        key = key[len(prefix):]
-    fresh_dict[key] = value
-model.load_state_dict(fresh_dict)
+parser.add_argument(
+        '--model', required=True,
+        help="Path to state dict of model."
+        )
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                 std=[0.229, 0.224, 0.225])
@@ -61,6 +56,17 @@ transforms = transforms.Compose([
       ])
 
 
+def clean_dict(dic):
+    """Removes module from keys. For some reason those are added when saving."""
+    fresh_dict = {}
+    for key, value in state_dict.items():
+        prefix = "module."
+        if key.startswith(prefix):
+            key = key[len(prefix):]
+        fresh_dict[key] = value
+    return fresh_dict
+
+
 def extract_csv_name(csv_file):
     filename = os.path.basename(csv_file)
     if filename.endswith(".csv"):
@@ -70,14 +76,27 @@ def extract_csv_name(csv_file):
 
 args = parser.parse_args()
 
+csv_file = os.path.expanduser(args.csv_file)
+data_dir = os.path.expanduser(args.data_dir)
+model_dir = os.path.expanduser(args.model)
+
 if args.filename == None:
-    output_file = "%s_embeddings.h5" % extract_csv_name(csv_file)
+    model_name = os.path.basename(args.model)
+    csv_name = extract_csv_name(csv_file)
+    output_file = "%s_%s_embeddings.h5" % (csv_name, model_name)
 else:
     output_file = args.filename
+
+if not os.path.isdir(args.output_dir):
+    os.mkdir(args.output_dir)
+
+output_file = os.path.join(os.path.abspath(args.output_dir), output_file)
 
 if os.path.isfile(output_file):
     #TODO create numerated filename
     raise RuntimeError("File %s already exists! Please choose a different name." % output_file)
+else:
+    print("Creating file in %s" % output_file)
 
 dataset = CsvDataset(csv_file, data_dir, transform=transforms)
 
@@ -86,8 +105,15 @@ dataloader = torch.utils.data.DataLoader(
             batch_size
         )
 
+model = trinet()
+#restore trained model
+state_dict = torch.load(model_dir)
+state_dict = clean_dict(state_dict)
+model.load_state_dict(state_dict)
 model = torch.nn.DataParallel(model).cuda()
 model.eval()
+
+
 import gc
 with h5py.File(output_file) as f_out:
     emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), embedding_dim), dtype=np.float32)
@@ -101,3 +127,4 @@ with h5py.File(output_file) as f_out:
         start_idx = end_idx
         print("Done (%d/%d)" % (idx, len(dataloader)))
         gc.collect()
+print(output_file, file=sys.stderr)
