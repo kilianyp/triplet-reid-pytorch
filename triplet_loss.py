@@ -19,18 +19,17 @@ class BatchHard(nn.Module):
         self.m = m
         self.name = "BatchHard"
 
-    def forward(self, embd, pids):
+    def forward(self, cdist, pids):
         """Caluclates the batch hard loss as in in arxiv.org/abs/1703.07737.
         
         Args:
-            embd: 2D tensor of the embedding vector shape [batch_size, Features]
-            pids: 1D tensor of the identities of shape [batch_size]. Tensor has to be of 
+            cdist (3D Tensor): Cross-distance between two 2D Vectors.
+            pids: 1D tensor of the identities of shape [batch_size].
         """
-        cdist = calc_cdist(embd, embd)
         mask_max = pids[None, :] == pids[:, None]
 
         mask_min = 1 - mask_max.data
-        furthest_positive = torch.max(cdist * mask_max.float(), dim=0)[0]
+        furthest_positive = torch.max(cdist * mask_max.float(), dim=0)[0] #TODO dimension?
         furthest_negative = [torch.min(cdists[mask_min[id]]) for id, cdists in enumerate(cdist)]
         furthest_negative = torch.stack(furthest_negative).squeeze() # stacking adds another dimension
         

@@ -97,6 +97,26 @@ def adjust_learning_rate(optimizer, t):
         param_group['lr'] = lr
     return lr
 
+def topk(cdist, pids, k):
+    """Calculates the top-k accuracy.
+    
+    Args:
+        k: k smallest value
+        
+    """ 
+    batch_size = cdist.size()[0]
+    index = torch.topk(cdist, k+1, largest=False, dim=1)[1] #topk returns value and index
+    index = index[:, 1:] # drop diagonal
+
+    topk = torch.zeros(cdist.size()[0]).byte()
+    topk = topk.cuda()
+    topks = []
+    for c in index.split(1, dim=1):
+        c = c.squeeze() # c is batch_size x 1
+        topk = topk | (pids.data == pids[c].data)
+        acc = torch.sum(topk) / batch_size
+        topks.append(acc)
+    return topks
 
 def var2f(x):
     return float(x.data.cpu().numpy())
@@ -161,7 +181,7 @@ t0 = args.decay_start_iteration
 t1 = args.train_iterations
 
 t = 1
- 
+
 print("Starting training: %s" % training_name)
 log_h = open(os.path.join(log_dir, "log.csv"), 'w')
 log_writer = csv.writer(log_h)
@@ -173,13 +193,17 @@ while t <= t1:
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
         result = model(data)
 #        result.register_hook(lambda x: print("Gradient", x))
-        losses = loss_fn(result, target)
+        cdist = calc_cdist(result, result)
+        losses = loss_fn(cdist, target)
         loss_mean = torch.mean(losses)
         loss_f = var2f(loss_mean)
         lr = adjust_learning_rate(optimizer, t)
-        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f}".format(
-            t,
-            var2f(torch.min(losses)), var2f(torch.max(losses)), loss_f, lr))
+        topks = topk(cdist, target, 5)
+        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f}"
+              "top1: {:.3f} top5: {:.3f}".format(
+            t, var2f(torch.min(losses)), var2f(torch.max(losses)), loss_f, lr,
+            topks[0], topks[4]
+            ))
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
