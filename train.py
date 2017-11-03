@@ -14,7 +14,7 @@ from trinet import trinet
 from triplet_loss import *
 
 import os
-import csv
+import h5py
 
 from argparse import ArgumentParser
 
@@ -31,7 +31,7 @@ parser.add_argument(
         )
 
 parser.add_argument(
-        '--log_dir', default=".",
+        '--log_dir', default="training",
         help="Training logs are stored in this directory."
         )
 
@@ -40,23 +40,23 @@ parser.add_argument(
         help="The maximum number of (Images) that are loaded from the dataset")
 
 parser.add_argument(
-        '--P', default=18,
+        '--P', default=18, type=int,
         help="Number of persons (pids) per batch.")
 
 parser.add_argument(
-        '--K', default=4,
+        '--K', default=4, type=int,
         help="Number of images per pid.")
 
 parser.add_argument(
-        '--train_iterations', default=25000,
+        '--train_iterations', default=25000, type=int,
         help="Number of training iterations.")
 
 parser.add_argument(
-        '--decay_start_iteration', default=15000,
+        '--decay_start_iteration', default=15000, type=int,
         help="Learningg decay starts at this iteration")
 
 parser.add_argument(
-        '--checkpoint_frequency', default=1000,
+        '--checkpoint_frequency', default=1000, type=int,
         help="After how many iterations a new checkpoint is created.")
 
 parser.add_argument('--margin', default='soft',
@@ -118,9 +118,8 @@ def topk(cdist, pids, k):
         topks.append(acc)
     return topks
 
-def var2f(x):
-    return float(x.data.cpu().numpy())
-
+def var2num(x):
+    return x.data.cpu().numpy()
 
 args = parser.parse_args()
 
@@ -135,7 +134,6 @@ model = torch.nn.DataParallel(model).cuda()
 
 eps0 = args.lr
 # save
-log_dir = os.path.join(log_dir, "training")
 training_name = args.prefix + "%s_%s-%s_%d-%d_%f_%d" % (
     extract_csv_name(csv_file), loss_fn.name,
     str(args.margin), args.P,
@@ -147,10 +145,10 @@ log_dir = os.path.join(log_dir, training_name)
 if not os.path.isdir(log_dir):
     os.mkdir(log_dir)
     print("Created new directory in %s" % log_dir)
-else:
-    if os.listdir(log_dir):
-        raise RuntimeError("Experiment seems to be have been already run in %s!"
-                "You can add a manual prefix with --prefix." % log_dir)
+#else:
+#    if os.listdir(log_dir):
+#        raise RuntimeError("Experiment seems to be have been already run in %s!"
+#                "You can add a manual prefix with --prefix." % log_dir)
 
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -183,12 +181,16 @@ t1 = args.train_iterations
 t = 1
 
 print("Starting training: %s" % training_name)
-log_h = open(os.path.join(log_dir, "log.csv"), 'w')
-log_writer = csv.writer(log_h)
-
+fout = h5py.File(os.path.join(log_dir, "log.h5"), 'w')
+emb_dim = 128
+batch_size = args.P * args.K
+emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
+pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
+file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
+log_dataset = fout.create_dataset("log", shape=(t1, 6))
 
 while t <= t1:
-    for batch_id, (data, target) in enumerate(dataloader):
+    for batch_id, (data, target, path) in enumerate(dataloader):
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
         result = model(data)
@@ -196,24 +198,30 @@ while t <= t1:
         cdist = calc_cdist(result, result)
         losses = loss_fn(cdist, target)
         loss_mean = torch.mean(losses)
-        loss_f = var2f(loss_mean)
         lr = adjust_learning_rate(optimizer, t)
         topks = topk(cdist, target, 5)
-        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f}"
+        min_loss = float(var2num(torch.min(losses)))
+        max_loss =  float(var2num(torch.max(losses)))
+        mean_loss = float(var2num(loss_mean))
+        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f} "
               "top1: {:.3f} top5: {:.3f}".format(
-            t, var2f(torch.min(losses)), var2f(torch.max(losses)), loss_f, lr,
+            t, min_loss, mean_loss, max_loss, lr,
             topks[0], topks[4]
             ))
+
+        emb_dataset[t-1] = var2num(result)
+        pids_dataset[t-1] = var2num(target)
+        file_dataset[t-1] = path
+        log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
-        log_writer.writerow([loss_f])
         t += 1
         if t % 1000 == 0:
             print("Iteration %d: Saved model" % t)
             torch.save(model.state_dict(), os.path.join(log_dir, "model_" + str(t)))
 
         #if t % 10 == 0:
-log_h.close()
+fout.close()
 
 
