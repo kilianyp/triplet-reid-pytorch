@@ -9,12 +9,17 @@ from csv_dataset import CsvDataset
 # Only good if sizes stay the same within the main loop!
 torch.backends.cudnn.benchmark = True
 
+from importlib import import_module
+
 from triplet_sampler import TripletBatchSampler
 from trinet import trinet
-from triplet_loss import *
+
+from triplet_loss import choices as loss_choices
+from triplet_loss import calc_cdist
 
 import os
 import h5py
+import json
 
 from argparse import ArgumentParser
 
@@ -28,6 +33,11 @@ parser.add_argument(
         '--data_dir', required=True,
         help="Root dir where the data is stored. This and the paths in the\
         csv file have to result in the correct file path."
+        )
+
+parser.add_argument(
+        '--no_log', action='store_true',
+        help="No logging"
         )
 
 parser.add_argument(
@@ -79,6 +89,7 @@ parser.add_argument('--lr', default=3e-4, type=float,
         help="Learning rate.")
 
 parser.add_argument('--model')
+parser.add_argument('--loss', required=True, choices=loss_choices)
 
 
 def extract_csv_name(csv_file):
@@ -127,28 +138,49 @@ csv_file = os.path.expanduser(args.csv_file)
 data_dir = os.path.expanduser(args.data_dir)
 log_dir = os.path.expanduser(args.log_dir)
 
-
-loss_fn = BatchHard(args.margin)
+mod = __import__('triplet_loss')
+loss = getattr(mod, args.loss)
+loss_fn = loss(args.margin, 0.8)
 model = trinet()
 model = torch.nn.DataParallel(model).cuda()
 
 eps0 = args.lr
-# save
+t0 = args.decay_start_iteration
+t1 = args.train_iterations
+
+
 training_name = args.prefix + "%s_%s-%s_%d-%d_%f_%d" % (
     extract_csv_name(csv_file), loss_fn.name,
     str(args.margin), args.P,
     args.K, eps0, args.train_iterations)
 
-if not os.path.isdir(log_dir):
-    os.mkdir(log_dir)
-log_dir = os.path.join(log_dir, training_name)
-if not os.path.isdir(log_dir):
-    os.mkdir(log_dir)
-    print("Created new directory in %s" % log_dir)
-#else:
-#    if os.listdir(log_dir):
-#        raise RuntimeError("Experiment seems to be have been already run in %s!"
-#                "You can add a manual prefix with --prefix." % log_dir)
+if not args.no_log:
+    if not os.path.isdir(log_dir):
+        os.mkdir(log_dir)
+    log_dir = os.path.join(log_dir, training_name)
+    if not os.path.isdir(log_dir):
+        os.mkdir(log_dir)
+        print("Created new directory in %s" % log_dir)
+    else:
+        if os.listdir(log_dir):
+            raise RuntimeError("Experiment seems to be have been already run in %s!"
+                    "You can add a manual prefix with --prefix." % log_dir)
+
+    args_file = os.path.join(log_dir, "args.json")
+
+    with open(args_file, 'w') as file:
+            json.dump(vars(args), file, ensure_ascii=False,
+                      indent=2, sort_keys=True)
+
+    # save
+    # logging
+    fout = h5py.File(os.path.join(log_dir, "log.h5"), 'w')
+    emb_dim = 128
+    batch_size = args.P * args.K
+    emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
+    pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
+    file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
+    log_dataset = fout.create_dataset("log", shape=(t1, 6))
 
 
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -164,9 +196,9 @@ transform = transforms.Compose([
         transforms.ToTensor(),
         normalize
     ])
-print(args.limit)
 dataset = CsvDataset(csv_file, data_dir, transform=transform, limit=args.limit)
 
+print("Loaded %d images" % len(dataset))
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -175,19 +207,9 @@ dataloader = torch.utils.data.DataLoader(
 
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 
-t0 = args.decay_start_iteration
-t1 = args.train_iterations
-
 t = 1
 
 print("Starting training: %s" % training_name)
-fout = h5py.File(os.path.join(log_dir, "log.h5"), 'w')
-emb_dim = 128
-batch_size = args.P * args.K
-emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
-pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
-file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
-log_dataset = fout.create_dataset("log", shape=(t1, 6))
 
 while t <= t1:
     for batch_id, (data, target, path) in enumerate(dataloader):
@@ -209,10 +231,12 @@ while t <= t1:
             topks[0], topks[4]
             ))
 
-        emb_dataset[t-1] = var2num(result)
-        pids_dataset[t-1] = var2num(target)
-        file_dataset[t-1] = path
-        log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
+
+        if not args.no_log:
+            emb_dataset[t-1] = var2num(result)
+            pids_dataset[t-1] = var2num(target)
+            file_dataset[t-1] = path
+            log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
@@ -220,6 +244,8 @@ while t <= t1:
         if t % 1000 == 0:
             print("Iteration %d: Saved model" % t)
             torch.save(model.state_dict(), os.path.join(log_dir, "model_" + str(t)))
+        if t >= t1:
+            break
 
         #if t % 10 == 0:
 fout.close()

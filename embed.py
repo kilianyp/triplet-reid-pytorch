@@ -80,6 +80,7 @@ csv_file = os.path.expanduser(args.csv_file)
 data_dir = os.path.expanduser(args.data_dir)
 model_dir = os.path.expanduser(args.model)
 
+model_path = os.path.realpath(args.model).split('/')[-2]
 if args.filename == None:
     model_name = os.path.basename(args.model)
     csv_name = extract_csv_name(csv_file)
@@ -89,8 +90,13 @@ else:
 
 if not os.path.isdir(args.output_dir):
     os.mkdir(args.output_dir)
+output_dir = os.path.join(args.output_dir, model_path)
+if not os.path.isdir(output_dir):
+    os.mkdir(output_dir)
 
-output_file = os.path.join(os.path.abspath(args.output_dir), output_file)
+
+output_file = os.path.join(os.path.abspath(output_dir), output_file)
+print(output_file)
 
 if os.path.isfile(output_file):
     #TODO create numerated filename
@@ -118,7 +124,7 @@ import gc
 with h5py.File(output_file) as f_out:
     emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), embedding_dim), dtype=np.float32)
     start_idx = 0
-    for idx, (data, _) in enumerate(dataloader):
+    for idx, (data, _, _) in enumerate(dataloader):
         data = data.cuda()
         data = Variable(data)
         result = model(data)
