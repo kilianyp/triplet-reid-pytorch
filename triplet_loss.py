@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 
 
+choices = ["BatchHard", "BatchSoft"]
 
 def calc_cdist(a, b, metric='euclidean'):
     if metric == 'euclidean':
@@ -43,5 +44,58 @@ class BatchHard(nn.Module):
             pass
         else:
             raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
+
+        return diff
+
+import pyro
+import numpy as np
+class BatchSoft(nn.Module):
+    """BatchSoft implementation using softmax."""
+
+    def __init__(self, m, T=1.0):
+        """
+        Args:
+            m: margin
+            T: Softmax temperature
+        """
+        super(BatchSoft, self).__init__()
+        self.m = m
+        self.T = T
+        self.name = "BatchSoft-%s-%f" % (str(m), T)
+        self.softmax = torch.nn.Softmax()
+        self.softmin = torch.nn.Softmin()
+
+    def forward(self, cdist, pids):
+        """Calculates the batch soft.
+        Instead of picking the hardest example through argmax or argmin
+        a softmax (softmin) is used to sample and use less difficult examples as well.
+        """
+        # mask where all positivies are set to true
+        mask_pos = pids[None, :] == pids[:, None]
+        mask_neg = 1 - mask_pos.data
+        
+        # only one copy
+        cdist_max = cdist.clone()
+        cdist_max[mask_neg] = -np.inf
+        
+        cdist_min = cdist.clone()
+        cdist_min[mask_pos] = np.inf
+        idx_pos = pyro.distributions.categorical(self.softmax(cdist_max/self.T))
+        idx_neg = pyro.distributions.categorical(self.softmin(cdist_min/self.T))
+        max_pos = cdist.masked_select(idx_pos.byte())
+        min_neg = cdist.masked_select(idx_neg.byte())
+        
+        diff = max_pos - min_neg
+
+        if isinstance(self.m, float):
+            diff = (diff + self.m).clamp(min=0)
+        elif self.m.lower() == "soft":
+            soft = torch.nn.Softplus()
+            diff = soft(diff)
+        elif self.m.lower() == "none":
+            pass
+        else:
+            raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
+
 
         return diff
