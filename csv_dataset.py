@@ -23,7 +23,8 @@ def make_dataset(csv_file, data_dir, limit):
         for id, row in enumerate(reader):
             if limit is not None and id >= limit:
                 break
-            target, file_name = row
+            target = row[0]
+            file_name = row[1]
             file_dir = os.path.join(data_dir, file_name)
             if not os.path.isfile(file_dir):
                 warnings.warn("File %s could not be found and is skipped!" % file_dir)
