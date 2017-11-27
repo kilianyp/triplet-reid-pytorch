@@ -140,13 +140,42 @@ log_dir = os.path.expanduser(args.log_dir)
 
 mod = __import__('triplet_loss')
 loss = getattr(mod, args.loss)
-loss_fn = loss(args.margin, 0.8)
+
+# TODO allow arbitrary number of arguments
+loss_fn = loss(args.margin)
 model = trinet()
 model = torch.nn.DataParallel(model).cuda()
 
 eps0 = args.lr
 t0 = args.decay_start_iteration
 t1 = args.train_iterations
+
+
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                std=[0.229, 0.224, 0.225])
+
+H = args.image_height
+W = args.image_width
+scale = args.scale
+transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.Resize((int(H*scale), int(W*scale))),
+        transforms.RandomCrop((H, W)),
+        transforms.ToTensor(),
+        normalize
+    ])
+dataset = CsvDataset(csv_file, data_dir, transform=transform, limit=args.limit)
+
+print("Loaded %d images" % len(dataset))
+
+dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_sampler=TripletBatchSampler(args.P, args.K, dataset))
+
+
+optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
+
+t = 1
 
 
 training_name = args.prefix + "%s_%s-%s_%d-%d_%f_%d" % (
@@ -182,32 +211,6 @@ if not args.no_log:
     file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
     log_dataset = fout.create_dataset("log", shape=(t1, 6))
 
-
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225])
-
-H = args.image_height
-W = args.image_width
-scale = args.scale
-transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),
-        transforms.Resize((int(H*scale), int(W*scale))),
-        transforms.RandomCrop((H, W)),
-        transforms.ToTensor(),
-        normalize
-    ])
-dataset = CsvDataset(csv_file, data_dir, transform=transform, limit=args.limit)
-
-print("Loaded %d images" % len(dataset))
-
-dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_sampler=TripletBatchSampler(args.P, args.K, dataset))
-
-
-optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
-
-t = 1
 
 print("Starting training: %s" % training_name)
 
