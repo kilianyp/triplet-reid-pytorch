@@ -100,7 +100,9 @@ print(output_file)
 
 if os.path.isfile(output_file):
     #TODO create numerated filename
-    raise RuntimeError("File %s already exists! Please choose a different name." % output_file)
+    print(output_file, file=sys.stderr)
+    print("File %s already exists! Please choose a different name." % output_file)
+    sys.exit(0)
 else:
     print("Creating file in %s" % output_file)
 
