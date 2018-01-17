@@ -4,29 +4,20 @@ import sys
 import os
 
 parser = argparse.ArgumentParser()
-parser.add_argument("model")
-parser.add_argument("--use_junk", action='store_true')
-parser.add_argument("--detector", choices=["DPM", "SDP", "FRCNN"], required=True)
+parser.add_argument("--model", help="Path to model", required=True)
+parser.add_argument("--query", help="Path to query csv", required=True)
+parser.add_argument("--gallery", help="Path to gallery csv", required=True)
+parser.add_argument("--data_dir", help="Path to image directory", required=True)
+parser.add_argument("--prefix", required=False)
 args = parser.parse_args()
 model = args.model
-print(model)
 
-eval_output_folder = "evaluations"
 
 # calculate embeddings
 
-data_dir="/work/pfeiffer/MOT17/ReID/{}".format(args.detector)
-if args.use_junk:
-    gallery_csv="/work/pfeiffer/MOT17/ReID/{}/gallery.csv".format(args.detector)
-else:
-    gallery_csv="/work/pfeiffer/MOT17/ReID/{}/val.csv".format(args.detector)
-query_csv="/work/pfeiffer/MOT17/ReID/{}/val.csv".format(args.detector)
-junk_csv="/work/pfeiffer/MOT17/ReID/{}/junk.csv".format(args.detector)
-
-
-
-gallery_csv= os.path.expanduser(gallery_csv)
-query_csv = os.path.expanduser(query_csv)
+gallery_csv= os.path.expanduser(args.gallery)
+query_csv = os.path.expanduser(args.query)
+data_dir = os.path.expanduser(args.data_dir)
 
 
 gallery_args = ["python3","embed.py",
@@ -61,22 +52,20 @@ else:
 
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
-             "--dataset", "diagonal",
+             "--dataset", "mot17",
              "--query_dataset", query_csv,
              "--query_embeddings", query_embeddings,
              "--gallery_dataset", gallery_csv,
              "--gallery_embeddings", gallery_embeddings,
              "--metric", "euclidean",
              "--batch_size", "128"]
-eval_output_folder = os.path.join(
-    eval_output_folder,
-    "{}_{}".format(os.path.basename(query_csv), os.path.basename(gallery_csv)))
-print(eval_output_folder)
 
-if not os.path.isdir(eval_output_folder):
-    os.mkdir(eval_output_folder)
-txt_file = os.path.join(eval_output_folder, "{}.txt".format(os.path.basename(model)))
+
+file_name =  "{}{}_{}_{}.txt".format(args.prefix, os.path.basename(query_csv), os.path.basename(gallery_csv), os.path.basename(model))
+
+txt_file = os.path.join(os.path.dirname(model), file_name)
 print(txt_file)
 with open(txt_file, 'w') as f_h:
+    print(' '.join(eval_args))
     task = subprocess.Popen(eval_args, stdout=f_h)
     task.wait()
