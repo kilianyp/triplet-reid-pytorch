@@ -12,12 +12,13 @@ def pil_loader(path):
         with Image.open(f) as img:
             return img.convert('RGB')
 
-def make_dataset(csv_file, data_dir, limit):
+def make_dataset_default(csv_file, data_dir, limit):
     """Reads in a csv file according to the scheme "target, path".
     Args:
         limit: Number of images that are read in.
     """
     imgs = []
+    print(limit)
     with open(csv_file, 'r') as f:
         reader = csv.reader(f, delimiter=',')
         for id, row in enumerate(reader):
@@ -36,7 +37,7 @@ def make_dataset(csv_file, data_dir, limit):
 class CsvDataset(Dataset):
     """Loads data from a csv file."""
 
-    def __init__(self, csv_file, data_dir, transform=None, limit=None):
+    def __init__(self, csv_file, data_dir, transform=None, limit=None, make_dataset_func=make_dataset_default):
         """
         Args:
             csv_file: The path to the csv file.
@@ -57,7 +58,7 @@ class CsvDataset(Dataset):
         self.loader = pil_loader
         self.transform = transform
 
-        self.imgs = make_dataset(self.csv_file, self.data_dir, limit)
+        self.imgs = make_dataset_func(self.csv_file, self.data_dir, limit)
 
     
     def __getitem__(self, index):
