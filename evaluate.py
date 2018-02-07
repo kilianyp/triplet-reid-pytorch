@@ -2,6 +2,7 @@ import argparse
 import subprocess
 import sys
 import os
+from embed import create_embeddings
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", help="Which dataset to evaluate", required=True)
@@ -21,35 +22,13 @@ query_csv = os.path.expanduser(args.query)
 data_dir = os.path.expanduser(args.data_dir)
 
 
-gallery_args = ["python3","embed.py",
-                "--csv_file", gallery_csv,
-                "--data_dir", data_dir,
-                "--model", model]
-task = subprocess.Popen(gallery_args, stderr=subprocess.PIPE)
+gallery_embeddings = create_embeddings(gallery_csv, data_dir, model)
 # generated filename is written in stderr, remove some whitecharacters.
-gallery_embeddings = task.stderr.read().rstrip()
-gallery_embeddings = gallery_embeddings.decode('utf-8')
-#gallery_embeddings = "/home/pfeiffer/Projects/triplet-reid-pytorch/embed/train_BatchHard-soft_18-4_0.000300_25000/val_model_25000_embeddings.h5"
-task.wait()
-if(task.returncode > 0):
-    print(gallery_embeddings)
-    print("Error %d!" % task.returncode)
-    sys.exit()
 
 if gallery_csv == query_csv:
     query_embeddings = gallery_embeddings
 else:
-    query_args = ["python3", "embed.py",
-                  "--csv_file", query_csv,
-                  "--data_dir", data_dir,
-                  "--model", model]
-    task = subprocess.Popen(query_args, stderr=subprocess.PIPE)
-    query_embeddings = task.stderr.read().rstrip().decode("utf-8")
-    print(query_embeddings)
-    task.wait()
-    if(task.returncode > 0):
-        print("Error %d!" % task.returncode)
-        sys.exit()
+    query_embeddings = create_embeddings(query_csv, data_dir, model)
 
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
@@ -59,7 +38,7 @@ eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
              "--gallery_dataset", gallery_csv,
              "--gallery_embeddings", gallery_embeddings,
              "--metric", "euclidean",
-             "--batch_size", "128"]
+             "--batch_size", "32"]
 
 
 file_name =  "{}{}_{}_{}.txt".format(args.prefix, os.path.basename(query_csv), os.path.basename(gallery_csv), os.path.basename(model))

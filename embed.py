@@ -38,6 +38,10 @@ parser.add_argument(
         help="Path to state dict of model."
         )
 
+parser.add_argument(
+        '--n_latent', required=True, type=int,
+        help="Dimension of latent variable."
+        )
 normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                 std=[0.229, 0.224, 0.225])
 
@@ -45,8 +49,7 @@ H = 256
 W = 128
 scale = 1.125
 
-embedding_dim = 128
-batch_size = 30 
+batch_size = 30
 
 transforms = transforms.Compose([
         transforms.Resize((int(H*scale), int(W*scale))),
@@ -74,24 +77,18 @@ def extract_csv_name(csv_file):
     else:
         return filename
 
-if __name__ == "__main__":
-    args = parser.parse_args()
-
-    csv_file = os.path.expanduser(args.csv_file)
-    data_dir = os.path.expanduser(args.data_dir)
-    model_dir = os.path.expanduser(args.model)
-
-    model_path = os.path.realpath(args.model).split('/')[-2]
-    if args.filename == None:
-        model_name = os.path.basename(args.model)
+def create_embeddings(csv_file, data_dir, model_dir, filename=None, output_dir="embed"):
+    model_path = os.path.realpath(model_dir).split('/')[-2]
+    if filename == None:
+        model_name = os.path.basename(model_dir)
         csv_name = extract_csv_name(csv_file)
-        output_file = "%s_%s_embeddings.h5" % (csv_name, model_name)
+        output_file = "%s_%s.h5" % (csv_name, model_name)
     else:
-        output_file = args.filename
+        output_file = filename
 
-    if not os.path.isdir(args.output_dir):
-        os.mkdir(args.output_dir)
-    output_dir = os.path.join(args.output_dir, model_path)
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    output_dir = os.path.join(output_dir, model_path)
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
 
@@ -101,9 +98,8 @@ if __name__ == "__main__":
 
     if os.path.isfile(output_file):
         #TODO create numerated filename
-        print(output_file, file=sys.stderr)
         print("File %s already exists! Please choose a different name." % output_file)
-        sys.exit(0)
+        return output_file
     else:
         print("Creating file in %s" % output_file)
 
@@ -120,13 +116,12 @@ if __name__ == "__main__":
     state_dict = clean_dict(state_dict)
     model.load_state_dict(state_dict)
     model = torch.nn.DataParallel(model).cuda()
-#    model = model.cuda()
     model.eval()
 
     endpoints = {}
     import gc
     with h5py.File(output_file) as f_out:
-        emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), embedding_dim), dtype=np.float32)
+        emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), 128), dtype=np.float32)
         start_idx = 0
         for idx, (data, _, _) in enumerate(dataloader):
             data = data
@@ -138,4 +133,12 @@ if __name__ == "__main__":
             start_idx = end_idx
             print("Done (%d/%d)" % (idx, len(dataloader)))
             gc.collect()
-    print(output_file, file=sys.stderr)
+    return output_file
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+
+    csv_file = os.path.expanduser(args.csv_file)
+    data_dir = os.path.expanduser(args.data_dir)
+    model_dir = os.path.expanduser(args.model)
+
