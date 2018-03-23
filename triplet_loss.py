@@ -1,54 +1,94 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 choices = ["BatchHard", "BatchSoft"]
 
 def calc_cdist(a, b, metric='euclidean'):
+    diff = a[:, None, :] - b[None, :, :]
     if metric == 'euclidean':
-        diff = a[:, None, :] - b[None, :, :]
-        # derivative of sqrt(0) is not defined!
-        return torch.sqrt(torch.sum(torch.mul(diff, diff), dim=2) + 1e-12)
+        return torch.sqrt(torch.sum(diff*diff, dim=2) + 1e-12)
+    elif metric == 'sqeuclidean':
+        return torch.sum(diff*diff, dim=2)
+    elif metric == 'cityblock':
+        return torch.sum(diff.abs(), dim=2)
     else:
         raise NotImplementedError("Metric %s has not been implemented!" % metric)
 
 
-class BatchHard(nn.Module):
+def _apply_margin(x, m):
+    if isinstance(m, float):
+        return (x + m).clamp(min=0)
+    elif m.lower() == "soft":
+        return F.softplus(x)
+    elif m.lower() == "none":
+        return x
+    else:
+        raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
 
+
+def batch_hard(cdist, pids, margin):
+    """Computes the batch hard loss as in arxiv.org/abs/1703.07737.
+
+    Args:
+        cdist (2D Tensor): All-to-all distance matrix, sized (B,B).
+        pids (1D tensor): PIDs (classes) of the identities, sized (B,).
+        margin: The margin to use, can be 'soft', 'none', or a number.
+    """
+    mask_pos = (pids[None, :] == pids[:, None]).float()
+
+    ALMOST_INF = 9999.9
+    furthest_positive = torch.max(cdist * mask_pos, dim=0)[0]
+    furthest_negative = torch.min(cdist + ALMOST_INF*mask_pos, dim=0)[0]
+    #furthest_negative = torch.stack([
+    #    torch.min(row_d[row_m]) for row_d, row_m in zip(cdist, mask_neg)
+    #]).squeeze() # stacking adds an extra dimension
+
+    return _apply_margin(furthest_positive - furthest_negative, margin)
+
+
+class BatchHard(nn.Module):
     def __init__(self, m):
         super(BatchHard, self).__init__()
+        self.name = "BatchHard(m={})".format(m)
         self.m = m
-        self.name = "BatchHard"
 
     def forward(self, cdist, pids):
-        """Caluclates the batch hard loss as in in arxiv.org/abs/1703.07737.
-        
-        Args:
-            cdist (3D Tensor): Cross-distance between two 2D Vectors.
-            pids: 1D tensor of the identities of shape [batch_size].
-        """
-        mask_max = pids[None, :] == pids[:, None]
+        return batch_hard(self.m)
 
-        mask_min = 1 - mask_max.data
-        furthest_positive = torch.max(cdist * mask_max.float(), dim=0)[0] #TODO dimension?
-        furthest_negative = [torch.min(cdists[mask_min[id]]) for id, cdists in enumerate(cdist)]
-        furthest_negative = torch.stack(furthest_negative).squeeze() # stacking adds another dimension
-        
-        diff = furthest_positive - furthest_negative
-        if isinstance(self.m, float):
-            diff = (diff + self.m).clamp(min=0)
-        elif self.m.lower() == "soft":
-            soft = torch.nn.Softplus()
-            diff = soft(diff)
-        elif self.m.lower() == "none":
-            pass
-        else:
-            raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
 
-        return diff
+def batch_soft(cdist, pids, margin, T=1.0):
+    """Calculates the batch soft.
+    Instead of picking the hardest example through argmax or argmin,
+    a softmax (softmin) is used to sample and use less difficult examples as well.
 
-import pyro
-import numpy as np
+    Args:
+        cdist (2D Tensor): All-to-all distance matrix, sized (B,B).
+        pids (1D tensor): PIDs (classes) of the identities, sized (B,).
+        margin: The margin to use, can be 'soft', 'none', or a number.
+        T (float): The temperature of the softmax operation.
+    """
+    # mask where all positivies are set to true
+    mask_pos = pids[None, :] == pids[:, None]
+    mask_neg = 1 - mask_pos.data
+
+    # only one copy
+    cdist_max = cdist.clone()
+    cdist_max[mask_neg] = -float('inf')
+    cdist_min = cdist.clone()
+    cdist_min[mask_pos] = float('inf')
+
+    # NOTE: We could even take multiple ones by increasing num_samples,
+    #       the following `gather` call does the right thing!
+    idx_pos = torch.multinomial(F.softmax(cdist_max/T, dim=1), num_samples=1)
+    idx_neg = torch.multinomial(F.softmin(cdist_min/T, dim=1), num_samples=1)
+    positive = cdist.gather(dim=1, index=idx_pos)[:,0]  # Drop the extra (samples) dim
+    negative = cdist.gather(dim=1, index=idx_neg)[:,0]
+
+    return _apply_margin(positive - negative, margin)
+
+
 class BatchSoft(nn.Module):
     """BatchSoft implementation using softmax."""
 
@@ -59,43 +99,9 @@ class BatchSoft(nn.Module):
             T: Softmax temperature
         """
         super(BatchSoft, self).__init__()
+        self.name = "BatchSoft(m={}, T={})".format(m, T)
         self.m = m
         self.T = T
-        self.name = "BatchSoft-%s-%f" % (str(m), T)
-        self.softmax = torch.nn.Softmax()
-        self.softmin = torch.nn.Softmin()
 
     def forward(self, cdist, pids):
-        """Calculates the batch soft.
-        Instead of picking the hardest example through argmax or argmin
-        a softmax (softmin) is used to sample and use less difficult examples as well.
-        """
-        # mask where all positivies are set to true
-        mask_pos = pids[None, :] == pids[:, None]
-        mask_neg = 1 - mask_pos.data
-        
-        # only one copy
-        cdist_max = cdist.clone()
-        cdist_max[mask_neg] = -np.inf
-        
-        cdist_min = cdist.clone()
-        cdist_min[mask_pos] = np.inf
-        idx_pos = pyro.distributions.categorical(self.softmax(cdist_max/self.T))
-        idx_neg = pyro.distributions.categorical(self.softmin(cdist_min/self.T))
-        max_pos = cdist.masked_select(idx_pos.byte())
-        min_neg = cdist.masked_select(idx_neg.byte())
-        
-        diff = max_pos - min_neg
-
-        if isinstance(self.m, float):
-            diff = (diff + self.m).clamp(min=0)
-        elif self.m.lower() == "soft":
-            soft = torch.nn.Softplus()
-            diff = soft(diff)
-        elif self.m.lower() == "none":
-            pass
-        else:
-            raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
-
-
-        return diff
+        return batch_soft(cdist, pids, self.m, self.T)
