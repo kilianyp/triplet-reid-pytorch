@@ -55,7 +55,7 @@ class BatchHard(nn.Module):
         self.m = m
 
     def forward(self, cdist, pids):
-        return batch_hard(self.m)
+        return batch_hard(cdist, pids, self.m)
 
 
 def batch_soft(cdist, pids, margin, T=1.0):
