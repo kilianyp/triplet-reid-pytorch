@@ -24,6 +24,12 @@ import logger as log
 
 parser = ArgumentParser()
 
+parser.add_argument('experiment',
+        help="Name of the experiment")
+
+parser.add_argument('--output_path', default="./experiments",
+        help="Path where logging files are stored.")
+
 parser.add_argument(
         '--csv_file', required=True,
         help="CSV file containing relative paths.")
@@ -72,8 +78,8 @@ parser.add_argument('--margin', default='soft',
         help="What margin to use: a float value, 'soft' for "
         "soft-margin, or no margin if 'none'")
 
-parser.add_argument('--prefix', default="",
-        help="Prefix of the training folder.")
+parser.add_argument('--temp', default=1.0,
+        help="Temperature of BatchSoft")
 
 parser.add_argument('--scale', default=1.125, type=float,
         help="Scaling of images before crop [scale * (image_height, image_width)]")
@@ -173,13 +179,15 @@ model = trinet(dim=128, num_classes=dataset.num_labels)
 
 model = torch.nn.DataParallel(model).cuda()
 
-loss_fn = loss(args.margin)
+loss_param = {"m": args.margin, "T": args.temp}
+
+loss_fn = loss(**loss_param)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 
 t = 1
 
 
-training_name = args.prefix + "%s_%s-%s_%d-%d_%f_%d" % (
+training_name = args.experiment + "%s_%s-%s_%d-%d_%f_%d" % (
     extract_csv_name(csv_file), loss_fn.name,
     str(args.margin), args.P,
     args.K, eps0, args.train_iterations)
@@ -212,18 +220,21 @@ log.create_logger(os.path.join(log_dir, "log.h5"), "h5", args.log_level)
 
 
 print("Starting training: %s" % training_name)
-
+loss_data = {}
+endpoints = {}
 while t <= t1:
     for batch_id, (data, target, path) in enumerate(dataloader):
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
-        emb, soft = model(data)
+        model(data, endpoints)
 #        result.register_hook(lambda x: print("Gradient", x))
-        cdist = calc_cdist(emb, emb)
-        losses = loss_fn(cdist, target, soft)
+        loss_data["dist"] = calc_cdist(endpoints["emb"], endpoints["emb"])
+        loss_data["pids"] = target
+        loss_data["endpoints"] = endpoints
+        losses = loss_fn(**loss_data)
         loss_mean = torch.mean(losses)
         lr = adjust_learning_rate(optimizer, t)
-        topks = topk(cdist, target, 5)
+        topks = topk(loss_data["dist"], target, 5)
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
@@ -235,7 +246,7 @@ while t <= t1:
 
 
         if args.log_level > 0:
-            log.write("emb", var2num(emb), dtype=np.float32)
+            log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
             log.write("pids", var2num(target), dtype=np.int)
             log.write("file", path, dtype=h5py.special_dtype(vlen=str))
             log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
