@@ -192,27 +192,20 @@ training_name = args.experiment + "%s_%s-%s_%d-%d_%f_%d" % (
     str(args.margin), args.P,
     args.K, eps0, args.train_iterations)
 
-if args.log_level > 0:
-    if not os.path.isdir(log_dir):
-        os.mkdir(log_dir)
-    log_dir = os.path.join(log_dir, training_name)
-    if not os.path.isdir(log_dir):
-        os.mkdir(log_dir)
-        print("Created new directory in %s" % log_dir)
-    else:
-        if os.listdir(log_dir):
-            raise RuntimeError("Experiment seems to be have been already run in %s!"
-                    "You can add a manual prefix with --prefix." % log_dir)
+log = log.create_logger("h5", args.experiment, args.output_path, args.log_level)
 
-    args_file = os.path.join(log_dir, "args.json")
+if os.listdir(log.log_dir):
+    #restore
+    args = log.restore_args()
+    pass
+else:
+    # new experiment
+    log.save_args(args)
 
-    with open(args_file, 'w') as file:
-            json.dump(vars(args), file, ensure_ascii=False,
-                      indent=2, sort_keys=True)
+
 
 # save
 # logging
-log.create_logger(os.path.join(log_dir, "log.h5"), "h5", args.log_level)
     #emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
     #pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
     #file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))

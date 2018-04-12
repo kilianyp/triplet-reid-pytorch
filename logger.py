@@ -5,6 +5,7 @@ import h5py
 import os
 import sys
 import numpy as np
+import json
 LOGGER = None
 
 
@@ -22,11 +23,18 @@ def get_data_shape(data):
     return dshape
         
 class Logger(object):
-    def __init__(self, path, level):
-        self.path = path
-        if os.path.exists(self.path):
-            print_warning("File already exists: {}.".format(self.path))
+    ARGS_FILE = "args.json"
+    def __init__(self, experiment, output_path, level):
         self.level = level
+        if not os.path.isdir(output_path):
+            os.mkdir(output_path)
+        log_dir = os.path.join(output_path, experiment)
+        if not os.path.isdir(log_dir):
+            os.mkdir(log_dir)
+        print("Logging to %s" % log_dir)
+        
+        self.log_dir = log_dir
+        self.args_file = os.path.join(self.log_dir, self.ARGS_FILE)
 
     def write(self, name, data, dtype):
         raise NotImplemented("The write function for this backend has not been implemented")
@@ -34,11 +42,25 @@ class Logger(object):
     def close(self):
         pass
 
+    def save_args(self, args):
+        if level == 0:
+            print_warning("Warning: Not saving arguments because of logging level 0")
+
+        with open(self.args_file, 'w') as file:
+            json.dump(vars(args), file, ensure_ascii=False,
+                        indent=2, sort_keys=True)
+
+    def restore_args(self):
+        with open(self.args_file, 'r') as file:
+            return json.load(file)
+
+
 class H5Logger(Logger):
     DEFAULT_SIZE = 100
-    def __init__(self, path, level):
-        super().__init__(path, level)
-        self.handle = h5py.File(self.path, 'w')
+    LOG_FILE = "log.h5"
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.handle = h5py.File(os.path.join(self.log_dir, self.LOG_FILE), 'w')
         self.columns = {}
 
     def write(self, name, data, dtype=None):
@@ -70,22 +92,13 @@ class H5Logger(Logger):
     def close(self):
         self.handle.close()
 
-def create_logger(path, type, level=1):
+def create_logger(type, *args, **kwargs):
     global LOGGER
     if type == "h5":
-        logger = H5Logger(path, level)
+        logger = H5Logger(*args, **kwargs)
     else:
         raise NotImplemented("Type is not implemented: {}".format(type))
     
     LOGGER = logger
     return logger
 
-def write(name, data, dtype=None):
-    if LOGGER is None:
-        raise RuntimeError("No logger has been created!")
-    if LOGGER.level == 0:
-        return
-    LOGGER.write(name, data, dtype)
-
-def close():
-    LOGGER.close()
