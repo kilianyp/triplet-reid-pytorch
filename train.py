@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from csv_dataset import CsvDataset
@@ -8,8 +7,6 @@ from csv_dataset import CsvDataset
 # Lets cuDNN benchmark conv implementations and choose the fastest.
 # Only good if sizes stay the same within the main loop!
 torch.backends.cudnn.benchmark = True
-
-from importlib import import_module
 
 from triplet_sampler import TripletBatchSampler
 from trinet import trinet
@@ -22,6 +19,8 @@ import h5py
 import json
 
 from argparse import ArgumentParser
+
+import logger as log
 
 parser = ArgumentParser()
 
@@ -203,13 +202,11 @@ if not args.no_log:
 
     # save
     # logging
-    fout = h5py.File(os.path.join(log_dir, "log.h5"), 'w')
-    emb_dim = 128
-    batch_size = args.P * args.K
-    emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
-    pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
-    file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
-    log_dataset = fout.create_dataset("log", shape=(t1, 6))
+    log.create_logger(os.path.join(log_dir, "log.h5"), "h5")
+    #emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
+    #pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
+    #file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
+    #log_dataset = fout.create_dataset("log", shape=(t1, 6))
 
 
 print("Starting training: %s" % training_name)
@@ -236,10 +233,14 @@ while t <= t1:
 
 
         if not args.no_log:
-            emb_dataset[t-1] = var2num(result)
-            pids_dataset[t-1] = var2num(target)
-            file_dataset[t-1] = path
-            log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
+            log.write("emb", var2num(result), dtype=np.float32)
+            log.write("pids", var2num(target), dtype=np.int)
+            log.write("file", path, dtype=h5py.special_dtype(vlen=str))
+            log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
+            #emb_dataset[t-1] = var2num(result)
+            #pids_dataset[t-1] = var2num(target)
+            #file_dataset[t-1] = path
+            #log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
@@ -251,6 +252,5 @@ while t <= t1:
             break
 
         #if t % 10 == 0:
-fout.close()
 
 
