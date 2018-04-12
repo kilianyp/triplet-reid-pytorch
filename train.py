@@ -35,8 +35,8 @@ parser.add_argument(
         )
 
 parser.add_argument(
-        '--no_log', action='store_true',
-        help="No logging"
+        '--log_level', default=1, type=int,
+        help="logging level"
         )
 
 parser.add_argument(
@@ -141,9 +141,7 @@ mod = __import__('triplet_loss')
 loss = getattr(mod, args.loss)
 
 # TODO allow arbitrary number of arguments
-loss_fn = loss(args.margin)
-model = trinet()
-model = torch.nn.DataParallel(model).cuda()
+
 
 eps0 = args.lr
 t0 = args.decay_start_iteration
@@ -171,7 +169,11 @@ dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_sampler=TripletBatchSampler(args.P, args.K, dataset))
 
+model = trinet(dim=128, num_classes=dataset.num_labels)
 
+model = torch.nn.DataParallel(model).cuda()
+
+loss_fn = loss(args.margin)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 
 t = 1
@@ -182,7 +184,7 @@ training_name = args.prefix + "%s_%s-%s_%d-%d_%f_%d" % (
     str(args.margin), args.P,
     args.K, eps0, args.train_iterations)
 
-if not args.no_log:
+if args.log_level > 0:
     if not os.path.isdir(log_dir):
         os.mkdir(log_dir)
     log_dir = os.path.join(log_dir, training_name)
@@ -200,9 +202,9 @@ if not args.no_log:
             json.dump(vars(args), file, ensure_ascii=False,
                       indent=2, sort_keys=True)
 
-    # save
-    # logging
-    log.create_logger(os.path.join(log_dir, "log.h5"), "h5")
+# save
+# logging
+log.create_logger(os.path.join(log_dir, "log.h5"), "h5", args.log_level)
     #emb_dataset = fout.create_dataset("emb", shape=(t1, batch_size,emb_dim), dtype=np.float32)
     #pids_dataset = fout.create_dataset("pids", shape=(t1, batch_size), dtype=np.int)
     #file_dataset = fout.create_dataset("file", shape=(t1, batch_size), dtype=h5py.special_dtype(vlen=str))
@@ -215,10 +217,10 @@ while t <= t1:
     for batch_id, (data, target, path) in enumerate(dataloader):
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
-        result = model(data)
+        emb, soft = model(data)
 #        result.register_hook(lambda x: print("Gradient", x))
-        cdist = calc_cdist(result, result)
-        losses = loss_fn(cdist, target)
+        cdist = calc_cdist(emb, emb)
+        losses = loss_fn(cdist, target, soft)
         loss_mean = torch.mean(losses)
         lr = adjust_learning_rate(optimizer, t)
         topks = topk(cdist, target, 5)
@@ -232,8 +234,8 @@ while t <= t1:
             ))
 
 
-        if not args.no_log:
-            log.write("emb", var2num(result), dtype=np.float32)
+        if args.log_level > 0:
+            log.write("emb", var2num(emb), dtype=np.float32)
             log.write("pids", var2num(target), dtype=np.int)
             log.write("file", path, dtype=h5py.special_dtype(vlen=str))
             log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
@@ -252,5 +254,5 @@ while t <= t1:
             break
 
         #if t % 10 == 0:
-
+log.close()
 

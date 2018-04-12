@@ -6,6 +6,7 @@ from PIL import Image
 
 import csv
 import warnings
+import numpy as np
 
 def pil_loader(path):
     with open(path,'rb') as f:
@@ -30,7 +31,7 @@ def make_dataset_default(csv_file, data_dir, limit):
             if not os.path.isfile(file_dir):
                 warnings.warn("File %s could not be found and is skipped!" % file_dir)
                 continue
-            imgs.append((file_dir, int(target)))
+            imgs.append([file_dir, int(target)])
             
     return imgs
 
@@ -59,16 +60,26 @@ class CsvDataset(Dataset):
         self.transform = transform
 
         self.imgs = make_dataset_func(self.csv_file, self.data_dir, limit)
+        # because of path in csv, everything is converted to string
+        labels = np.unique(np.asarray(self.imgs)[:, 1].astype(int))
+        label_dic = {}
+        new_label = 0
+
+        # rewrite pids starting from 0
+        for label in labels:
+            label_dic[label] = new_label
+            new_label += 1
+        for img in self.imgs:
+            img[1] = label_dic[img[1]]
+        self.num_labels = len(labels)
 
     
     def __getitem__(self, index):
         path, target = self.imgs[index]
-        
         img = self.loader(path)
         if self.transform is not None:
             img = self.transform(img)
-        
         return img, target, path
 
     def __len__(self):
-        return len(self.imgs)
+           return len(self.imgs)

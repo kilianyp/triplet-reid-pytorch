@@ -22,10 +22,11 @@ def get_data_shape(data):
     return dshape
         
 class Logger(object):
-    def __init__(self, path):
+    def __init__(self, path, level):
         self.path = path
         if os.path.exists(self.path):
             print_warning("File already exists: {}.".format(self.path))
+        self.level = level
 
     def write(self, name, data, dtype):
         raise NotImplemented("The write function for this backend has not been implemented")
@@ -35,8 +36,8 @@ class Logger(object):
 
 class H5Logger(Logger):
     DEFAULT_SIZE = 100
-    def __init__(self, path):
-        super().__init__(path)
+    def __init__(self, path, level):
+        super().__init__(path, level)
         self.handle = h5py.File(self.path, 'w')
         self.columns = {}
 
@@ -61,7 +62,7 @@ class H5Logger(Logger):
                 dshape = get_data_shape(data)
                 shape = tuple([maxsize] + list(dshape))
                 dataset.resize(shape)
-                print("Increased datset size to {}".format(maxsize))
+                print("Increased datset {} size to {}".format(name, maxsize))
                 self.columns[name][2] = maxsize
         dataset[position] = data
         self.columns[name][1] += 1
@@ -69,10 +70,10 @@ class H5Logger(Logger):
     def close(self):
         self.handle.close()
 
-def create_logger(path, type):
+def create_logger(path, type, level=1):
     global LOGGER
     if type == "h5":
-        logger = H5Logger(path)
+        logger = H5Logger(path, level)
     else:
         raise NotImplemented("Type is not implemented: {}".format(type))
     
@@ -82,6 +83,8 @@ def create_logger(path, type):
 def write(name, data, dtype=None):
     if LOGGER is None:
         raise RuntimeError("No logger has been created!")
+    if LOGGER.level == 0:
+        return
     LOGGER.write(name, data, dtype)
 
 def close():
