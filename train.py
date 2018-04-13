@@ -21,6 +21,8 @@ from argparse import ArgumentParser
 
 import logger as log
 
+import time
+
 parser = ArgumentParser()
 
 parser.add_argument('experiment',
@@ -175,7 +177,10 @@ print("Loaded %d images" % len(dataset))
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_sampler=TripletBatchSampler(args.P, args.K, dataset))
+        batch_sampler=TripletBatchSampler(args.P, args.K, dataset)
+        num_workers=4, pin_memory=True
+        )
+
 
 model = mgn(dim=128, num_classes=dataset.num_labels)
 
@@ -213,8 +218,10 @@ log.save_args(args)
 print("Starting training: %s" % training_name)
 loss_data = {}
 endpoints = {}
+overall_time = time.time()
 while t <= t1:
     for batch_id, (data, target, path) in enumerate(dataloader):
+        start_time = time.time()
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
         endpoints = model(data, endpoints)
@@ -229,12 +236,6 @@ while t <= t1:
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
-        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f} "
-              "top1: {:.3f} top5: {:.3f}".format(
-            t, min_loss, mean_loss, max_loss, lr,
-            topks[0], topks[4]
-            ))
-
 
         if args.log_level > 0:
             log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
@@ -248,6 +249,14 @@ while t <= t1:
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
+        
+        took = time.time() - start_time
+        print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f} "
+                "top1: {:.3f} top5: {:.3f} | took {:.3f}s".format(
+            t, min_loss, mean_loss, max_loss, lr,
+            topks[0], topks[4], took
+            ))
+
         t += 1
         if t % 1000 == 0:
             print("Iteration %d: Saved model" % t)
@@ -258,3 +267,4 @@ while t <= t1:
         #if t % 10 == 0:
 log.close()
 
+print("Finished Training! Took: {:.3f}".format(overall_time-time.time()))
