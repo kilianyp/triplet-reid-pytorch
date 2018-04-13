@@ -27,8 +27,8 @@ class TriNet(ResNet):
             nn.Linear(1024, 128)
         )
 
-        self.batch_norm.weight.data.fill_(1)
-        self.batch_norm.bias.data.zero_()
+        batch_norm.weight.data.fill_(1)
+        batch_norm.bias.data.zero_()
 
     def forward(self, x, endpoints):
         x = super.forward(x)
@@ -71,7 +71,7 @@ class MGN(ResNet):
     def __init__(self, block, layers, num_classes, dim=128):
         """Initializes original ResNet and overwrites fully connected layer."""
 
-        super(TriNet, self).__init__(block, layers, 1) # 0 classes thows an error
+        super().__init__(block, layers, 1) # 0 classes thows an error
 
         self.batch_norm = nn.BatchNorm1d(1024)
         self.avgpool = nn.AvgPool2d((8,4))
