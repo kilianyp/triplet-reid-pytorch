@@ -9,14 +9,13 @@ from csv_dataset import CsvDataset
 torch.backends.cudnn.benchmark = True
 
 from triplet_sampler import TripletBatchSampler
-from trinet import trinet
+from trinet import mgn
 
 from triplet_loss import choices as loss_choices
 from triplet_loss import calc_cdist
 
 import os
 import h5py
-import json
 
 from argparse import ArgumentParser
 
@@ -77,6 +76,9 @@ parser.add_argument(
 parser.add_argument('--margin', default='soft',
         help="What margin to use: a float value, 'soft' for "
         "soft-margin, or no margin if 'none'")
+
+parser.add_argument('--alpha', default=1.0, type=float,
+        help="Weight of the softmax loss.")
 
 parser.add_argument('--temp', default=1.0,
         help="Temperature of BatchSoft")
@@ -175,11 +177,11 @@ dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_sampler=TripletBatchSampler(args.P, args.K, dataset))
 
-model = trinet(dim=128, num_classes=dataset.num_labels)
+model = mgn(dim=128, num_classes=dataset.num_labels)
 
 model = torch.nn.DataParallel(model).cuda()
 
-loss_param = {"m": args.margin, "T": args.temp}
+loss_param = {"m": args.margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
@@ -194,13 +196,9 @@ training_name = args.experiment + "%s_%s-%s_%d-%d_%f_%d" % (
 
 log = log.create_logger("h5", args.experiment, args.output_path, args.log_level)
 
-if os.listdir(log.log_dir):
-    #restore
-    args = log.restore_args()
-    pass
-else:
-    # new experiment
-    log.save_args(args)
+#TODO restoring
+# new experiment
+log.save_args(args)
 
 
 
@@ -219,7 +217,7 @@ while t <= t1:
     for batch_id, (data, target, path) in enumerate(dataloader):
         data, target = data.cuda(), target.cuda()
         data, target = Variable(data, requires_grad=True), Variable(target, requires_grad=False)
-        model(data, endpoints)
+        endpoints = model(data, endpoints)
 #        result.register_hook(lambda x: print("Gradient", x))
         loss_data["dist"] = calc_cdist(endpoints["emb"], endpoints["emb"])
         loss_data["pids"] = target

@@ -43,7 +43,7 @@ class Logger(object):
         pass
 
     def save_args(self, args):
-        if level == 0:
+        if self.level == 0:
             print_warning("Warning: Not saving arguments because of logging level 0")
 
         with open(self.args_file, 'w') as file:
@@ -102,3 +102,7 @@ def create_logger(type, *args, **kwargs):
     LOGGER = logger
     return logger
 
+def write(name, data, dtype=None):
+    if LOGGER is None:
+        raise RuntimeError("No logger has been created!")
+    LOGGER.write(name, data, dtype)
