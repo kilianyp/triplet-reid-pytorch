@@ -4,6 +4,7 @@ import sys
 import os
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", help="Which dataset to evaluate", required=True)
 parser.add_argument("--model", help="Path to model", required=True)
 parser.add_argument("--query", help="Path to query csv", required=True)
 parser.add_argument("--gallery", help="Path to gallery csv", required=True)
@@ -52,7 +53,7 @@ else:
 
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
-             "--dataset", "mot17",
+             "--dataset", args.dataset,
              "--query_dataset", query_csv,
              "--query_embeddings", query_embeddings,
              "--gallery_dataset", gallery_csv,
