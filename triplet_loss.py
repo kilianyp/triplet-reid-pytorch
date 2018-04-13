@@ -27,7 +27,7 @@ def _apply_margin(x, m):
     elif m.lower() == "none":
         return x
     else:
-        raise NotImplementedError("The margin %s is not implemented in BatchHard!" % self.m)
+        raise NotImplementedError("The margin %s is not implemented in BatchHard!" % m)
 
 
 def batch_hard(cdist, pids, margin):
@@ -51,7 +51,7 @@ def batch_hard(cdist, pids, margin):
 
 
 class BatchHard(nn.Module):
-    def __init__(self, m):
+    def __init__(self, m, **kwargs):
         super(BatchHard, self).__init__()
         self.name = "BatchHard(m={})".format(m)
         self.m = m
@@ -94,7 +94,7 @@ def batch_soft(cdist, pids, margin, T=1.0):
 class BatchSoft(nn.Module):
     """BatchSoft implementation using softmax."""
 
-    def __init__(self, m, T=1.0):
+    def __init__(self, m, T=1.0, **kwargs):
         """
         Args:
             m: margin
@@ -116,20 +116,24 @@ class BatchHardWithSoftmaxLoss(nn.Module):
 
     """
 
-    def __init__(self, m):
+    def __init__(self, m, a=1.0, **kwargs):
         super().__init__()
         self.batch_hard = BatchHard(m)
         self.cross_entropy = nn.CrossEntropyLoss()
-        self.name = "BatchHardWithSofmtax(m={})".format(m)
+        self.name = "BatchHardWithSoftmax(m={}, a={})".format(m, a)
+        self.a = a
 
     def forward(self, dist, pids, endpoints, **kwargs):
         batch_hard_loss = self.batch_hard(dist, pids)
-        cross_entropy_loss = self.cross_entropy(endpoints["softmax"], pids)
-        ce_loss = float(var2num(cross_entropy_loss))
-        bh_loss = float(var2num(torch.mean(batch_hard_loss)))
-        print("bh loss {:.3f} ce loss: {:.3f}".format(bh_loss, ce_loss))
-        log.write("loss", (bh_loss, ce_loss), dtype=np.float32)
-        return batch_hard_loss + cross_entropy_loss
+        if self.a > 0:
+            cross_entropy_loss = self.cross_entropy(endpoints["soft"], pids)
+            ce_loss = float(var2num(cross_entropy_loss))
+            bh_loss = float(var2num(torch.mean(batch_hard_loss)))
+            print("bh loss {:.3f} ce loss: {:.3f}".format(bh_loss, ce_loss))
+            log.write("loss", (bh_loss, ce_loss), dtype=np.float32)
+            return batch_hard_loss + self.a * cross_entropy_loss
+        else:
+            return batch_hard_loss
 
 def var2num(x):
     return x.data.cpu().numpy()
