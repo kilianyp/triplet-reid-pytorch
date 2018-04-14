@@ -4,7 +4,7 @@ import torchvision.transforms as transforms
 
 import numpy as np
 from csv_dataset import CsvDataset
-from trinet import trinet
+from trinet import mgn
 
 import os
 import h5py
@@ -114,23 +114,25 @@ if __name__ == "__main__":
                 batch_size
             )
 
-    model = trinet()
+    model = mgn(dim=128, num_classes=751)
     #restore trained model
     state_dict = torch.load(model_dir)
     state_dict = clean_dict(state_dict)
     model.load_state_dict(state_dict)
     model = torch.nn.DataParallel(model).cuda()
+#    model = model.cuda()
     model.eval()
 
-
+    endpoints = {}
     import gc
     with h5py.File(output_file) as f_out:
         emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), embedding_dim), dtype=np.float32)
         start_idx = 0
         for idx, (data, _, _) in enumerate(dataloader):
-            data = data.cuda()
+            data = data
             data = Variable(data)
-            result = model(data)
+            model(data, endpoints)
+            result = endpoints["emb"]
             end_idx = start_idx + len(result)
             emb_dataset[start_idx:end_idx] = result.data.cpu().numpy()
             start_idx = end_idx
