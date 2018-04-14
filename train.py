@@ -9,7 +9,7 @@ from csv_dataset import CsvDataset
 torch.backends.cudnn.benchmark = True
 
 from triplet_sampler import TripletBatchSampler
-from trinet import mgn
+from trinet import choices as model_choices
 
 from triplet_loss import choices as loss_choices
 from triplet_loss import calc_cdist
@@ -68,6 +68,10 @@ parser.add_argument(
         help="Number of training iterations.")
 
 parser.add_argument(
+        '--embedding_dim', default=128, type=int,
+        help="Size of the embedding vector."
+        )
+parser.add_argument(
         '--decay_start_iteration', default=15000, type=int,
         help="Learningg decay starts at this iteration")
 
@@ -97,7 +101,7 @@ parser.add_argument('--image_width', default=128, type=int,
 parser.add_argument('--lr', default=3e-4, type=float,
         help="Learning rate.")
 
-parser.add_argument('--model')
+parser.add_argument('--model', required=True, choices=model_choices)
 parser.add_argument('--loss', required=True, choices=loss_choices)
 
 
@@ -177,12 +181,14 @@ print("Loaded %d images" % len(dataset))
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_sampler=TripletBatchSampler(args.P, args.K, dataset)
+        batch_sampler=TripletBatchSampler(args.P, args.K, dataset),
         num_workers=4, pin_memory=True
         )
 
-
-model = mgn(dim=128, num_classes=dataset.num_labels)
+model_parameters = {"dim": args.embedding_dim, "num_classes": dataset.num_labels}
+model_module = __import__('trinet')
+model = getattr(model_module, args.model)
+model = model(**model_parameters)
 
 model = torch.nn.DataParallel(model).cuda()
 

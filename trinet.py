@@ -4,6 +4,8 @@ from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
 import torch.utils.model_zoo as model_zoo
 
+choices = ["trinet", "mgn"]
+
 class TriNet(ResNet):
     """TriNet implementation.
 
@@ -13,7 +15,7 @@ class TriNet(ResNet):
     Second: 128 units, final embedding.
     """
     
-    def __init__(self, block, layers, dim=128):
+    def __init__(self, block, layers, dim=128, **kwargs):
         """Initializes original ResNet and overwrites fully connected layer."""
 
         super(TriNet, self).__init__(block, layers, 1) # 0 classes thows an error
@@ -31,7 +33,7 @@ class TriNet(ResNet):
         batch_norm.bias.data.zero_()
 
     def forward(self, x, endpoints):
-        x = super.forward(x)
+        x = super().forward(x)
         endpoints["emb"] = x
         return endpoints
 
@@ -68,7 +70,7 @@ class MGN(ResNet):
     Returns two heads, one for the TripletLoss, the other for the Softmax Loss.
     """
     
-    def __init__(self, block, layers, num_classes, dim=128):
+    def __init__(self, block, layers, num_classes, dim=128, **kwargs):
         """Initializes original ResNet and overwrites fully connected layer."""
 
         super().__init__(block, layers, 1) # 0 classes thows an error
