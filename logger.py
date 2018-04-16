@@ -106,3 +106,8 @@ def write(name, data, dtype=None):
     if LOGGER is None:
         raise RuntimeError("No logger has been created!")
     LOGGER.write(name, data, dtype)
+
+def save_pytorch_model(model, iteration):
+    import torch
+    torch.save(model.state_dict(), os.path.join(LOGGER.log_dir, "model_{}".format(iteration)))
+    print("Saved model to {}".format(LOGGER.log_dir))

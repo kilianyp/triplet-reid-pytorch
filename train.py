@@ -20,7 +20,7 @@ import h5py
 from argparse import ArgumentParser
 
 import logger as log
-
+from logger import save_pytorch_model
 import time
 
 parser = ArgumentParser()
@@ -44,11 +44,6 @@ parser.add_argument(
 parser.add_argument(
         '--log_level', default=1, type=int,
         help="logging level"
-        )
-
-parser.add_argument(
-        '--log_dir', default="training",
-        help="Training logs are stored in this directory."
         )
 
 parser.add_argument(
@@ -149,7 +144,6 @@ args = parser.parse_args()
 
 csv_file = os.path.expanduser(args.csv_file)
 data_dir = os.path.expanduser(args.data_dir)
-log_dir = os.path.expanduser(args.log_dir)
 
 mod = __import__('triplet_loss')
 loss = getattr(mod, args.loss)
@@ -265,12 +259,11 @@ while t <= t1:
 
         t += 1
         if t % 1000 == 0:
-            print("Iteration %d: Saved model" % t)
-            torch.save(model.state_dict(), os.path.join(log_dir, "model_" + str(t)))
+            save_pytorch_model(model, t)
         if t >= t1:
             break
 
         #if t % 10 == 0:
 log.close()
 
-print("Finished Training! Took: {:.3f}".format(overall_time-time.time()))
+print("Finished Training! Took: {:.3f}".format(time.time() - overall_time))
