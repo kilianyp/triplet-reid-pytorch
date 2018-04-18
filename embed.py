@@ -5,6 +5,7 @@ import torchvision.transforms as transforms
 import numpy as np
 from csv_dataset import CsvDataset
 from trinet import mgn
+from trinet import trinet
 
 import os
 import h5py
@@ -49,13 +50,18 @@ H = 256
 W = 128
 scale = 1.125
 
-batch_size = 30
+batch_size = 6
 
-transforms = transforms.Compose([
+to_tensor = transforms.ToTensor()
+
+def to_normalized_tensor(crop):
+    return normalize(to_tensor(crop))
+
+transform_comp = transforms.Compose([
         transforms.Resize((int(H*scale), int(W*scale))),
+        transforms.TenCrop((H, W)),
 #         transforms.TenCrop((H, W)),
-        transforms.ToTensor(),
-        normalize
+        transforms.Lambda(lambda crops: torch.stack([to_normalized_tensor(crop) for crop in crops]))
       ])
 
 
@@ -103,7 +109,7 @@ def create_embeddings(csv_file, data_dir, model_dir, filename=None, output_dir="
     else:
         print("Creating file in %s" % output_file)
 
-    dataset = CsvDataset(csv_file, data_dir, transform=transforms)
+    dataset = CsvDataset(csv_file, data_dir, transform=transform_comp)
 
     dataloader = torch.utils.data.DataLoader(
                 dataset,
@@ -124,15 +130,19 @@ def create_embeddings(csv_file, data_dir, model_dir, filename=None, output_dir="
         emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), 128), dtype=np.float32)
         start_idx = 0
         for idx, (data, _, _) in enumerate(dataloader):
-            data = data
             data = Variable(data)
-            model(data, endpoints)
+            # with cropping there is an additional dimension
+            bs, ncrops, c, h, w = data.size()
+            endpoints = model(data.view(-1, c, h, w), endpoints)
             result = endpoints["emb"]
+            #restore batch and crops dimension and use mean over all crops
+            result = result.view(bs, ncrops, -1).mean(1)
             end_idx = start_idx + len(result)
             emb_dataset[start_idx:end_idx] = result.data.cpu().numpy()
             start_idx = end_idx
-            print("Done (%d/%d)" % (idx, len(dataloader)))
+            print("\rDone (%d/%d)" % (idx, len(dataloader)), flush=True, end='')
             gc.collect()
+    print()
     return output_file
 
 if __name__ == "__main__":
