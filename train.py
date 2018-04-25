@@ -116,6 +116,19 @@ def adjust_learning_rate(optimizer, t):
         param_group['lr'] = lr
     return lr
 
+def adjust_alpha_rate(loss, t):
+    a1 = 5000
+    a2 = 10000
+    if t <= a1:
+        alpha = 1.0
+    elif t < a2:
+        alpha = 1.0 - ((t - a1) / (a2 - a1))
+    else:
+        alpha = 0.0
+
+    loss.a = alpha
+    return alpha
+
 def topk(cdist, pids, k):
     """Calculates the top-k accuracy.
     
@@ -179,6 +192,8 @@ dataloader = torch.utils.data.DataLoader(
         num_workers=4, pin_memory=True
         )
 
+#also save num_labels
+args.num_classes = dataset.num_labels
 model_parameters = {"dim": args.embedding_dim, "num_classes": dataset.num_labels}
 model_module = __import__('trinet')
 model = getattr(model_module, args.model)
@@ -229,6 +244,7 @@ while t <= t1:
         loss_data["dist"] = calc_cdist(endpoints["emb"], endpoints["emb"])
         loss_data["pids"] = target
         loss_data["endpoints"] = endpoints
+        #alpha = adjust_alpha_rate(loss_fn, t)
         losses = loss_fn(**loss_data)
         loss_mean = torch.mean(losses)
         lr = adjust_learning_rate(optimizer, t)
@@ -237,22 +253,17 @@ while t <= t1:
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
 
-        if args.log_level > 0:
-            log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
-            log.write("pids", var2num(target), dtype=np.int)
-            log.write("file", path, dtype=h5py.special_dtype(vlen=str))
-            log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
-            #emb_dataset[t-1] = var2num(result)
-            #pids_dataset[t-1] = var2num(target)
-            #file_dataset[t-1] = path
-            #log_dataset[t-1] = [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]]
+        log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
+        log.write("pids", var2num(target), dtype=np.int)
+        log.write("file", path, dtype=h5py.special_dtype(vlen=str))
+        log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
         
         took = time.time() - start_time
         print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f} "
-                "top1: {:.3f} top5: {:.3f} | took {:.3f}s".format(
+              "top1: {:.3f} top5: {:.3f} | took {:.3f}s".format(
             t, min_loss, mean_loss, max_loss, lr,
             topks[0], topks[4], took
             ))
