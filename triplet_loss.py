@@ -126,7 +126,11 @@ class BatchHardWithSoftmaxLoss(nn.Module):
     def forward(self, dist, pids, endpoints, **kwargs):
         batch_hard_loss = self.batch_hard(dist, pids)
         if self.a > 0:
-            cross_entropy_loss = self.cross_entropy(endpoints["soft"], pids)
+            cross_entropy_loss = 0.0
+            for softmax in endpoints["soft"]:
+                cross_entropy_loss += self.cross_entropy(softmax, pids)
+                ce_loss = float(var2num(cross_entropy_loss))
+                print(ce_loss)
             ce_loss = float(var2num(cross_entropy_loss))
             bh_loss = float(var2num(torch.mean(batch_hard_loss)))
             print("bh loss {:.3f} ce loss: {:.3f}".format(bh_loss, ce_loss))
