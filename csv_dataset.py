@@ -31,7 +31,7 @@ def make_dataset_default(csv_file, data_dir, limit):
             if not os.path.isfile(file_dir):
                 warnings.warn("File %s could not be found and is skipped!" % file_dir)
                 continue
-            imgs.append([file_dir, int(target)])
+            imgs.append([file_dir, target])
             
     return imgs
 
@@ -61,16 +61,15 @@ class CsvDataset(Dataset):
 
         self.imgs = make_dataset_func(self.csv_file, self.data_dir, limit)
         # because of path in csv, everything is converted to string
-        labels = np.unique(np.asarray(self.imgs)[:, 1].astype(int))
+        labels = np.unique(np.asarray(self.imgs, dtype=str)[:, 1])
         label_dic = {}
         new_label = 0
-
         # rewrite pids starting from 0
         for label in labels:
             label_dic[label] = new_label
             new_label += 1
         for img in self.imgs:
-            img[1] = label_dic[img[1]]
+            img[1] = label_dic[str(img[1])]
         self.num_labels = len(labels)
 
     
