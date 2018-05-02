@@ -10,7 +10,7 @@ parser.add_argument("--model", help="Path to model", required=True)
 parser.add_argument("--query", help="Path to query csv", required=True)
 parser.add_argument("--gallery", help="Path to gallery csv", required=True)
 parser.add_argument("--data_dir", help="Path to image directory", required=True)
-parser.add_argument("--batch_size", help="Batch size", type=int, default=32)
+parser.add_argument("--batch_size", help="Batch size", type=str, default="32")
 parser.add_argument("--prefix", required=False)
 args = parser.parse_args()
 model = args.model
