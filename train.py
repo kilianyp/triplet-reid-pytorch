@@ -10,6 +10,7 @@ torch.backends.cudnn.benchmark = True
 
 from triplet_sampler import TripletBatchSampler
 from trinet import choices as model_choices
+from trinet import model_parameters
 
 from triplet_loss import choices as loss_choices
 from triplet_loss import calc_cdist
@@ -63,7 +64,7 @@ parser.add_argument(
         help="Number of training iterations.")
 
 parser.add_argument(
-        '--embedding_dim', default=128, type=int,
+        '--dim', default=128, type=int,
         help="Size of the embedding vector."
         )
 parser.add_argument(
@@ -96,9 +97,11 @@ parser.add_argument('--image_width', default=128, type=int,
 parser.add_argument('--lr', default=3e-4, type=float,
         help="Learning rate.")
 
+
 parser.add_argument('--model', required=True, choices=model_choices)
 parser.add_argument('--loss', required=True, choices=loss_choices)
-
+parser.add_argument('--mgn_branches', required=False, nargs='+', type=int,
+        help="Branch configuration for mgn network.")
 
 def extract_csv_name(csv_file):
     filename = os.path.basename(csv_file)
@@ -194,12 +197,13 @@ dataloader = torch.utils.data.DataLoader(
 
 #also save num_labels
 args.num_classes = dataset.num_labels
-model_parameters = {"dim": args.embedding_dim, "num_classes": dataset.num_labels}
+model_parameters.update(args.__dict__)
 model_module = __import__('trinet')
 model = getattr(model_module, args.model)
 model = model(**model_parameters)
 
 model = torch.nn.DataParallel(model).cuda()
+#model = model.cuda()
 
 loss_param = {"m": args.margin, "T": args.temp, "a": args.alpha}
 

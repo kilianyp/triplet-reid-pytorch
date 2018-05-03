@@ -1,11 +1,13 @@
 import torch.nn as nn
 import torch
+import torch.nn.functional as f
 from torchvision.models.resnet import ResNet
 from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
 import torch.utils.model_zoo as model_zoo
 
 choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test"]
+model_parameters = {"dim": None, "num_classes": None, "mgn_branches": None}
 
 class TriNet(ResNet):
     """TriNet implementation.
@@ -29,9 +31,9 @@ class TriNet(ResNet):
             nn.ReLU(),
             nn.Linear(1024, 128)
         )
-
         batch_norm.weight.data.fill_(1)
         batch_norm.bias.data.zero_()
+        self.dim = dim
 
     def forward(self, x, endpoints):
         x = super().forward(x)
@@ -89,6 +91,7 @@ class MGN(ResNet):
         self.fc_soft = nn.Linear(1024, num_classes)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
+        self.dim = dim
 
     def forward(self, x, endpoints):
         x = self.conv1(x)
@@ -106,7 +109,7 @@ class MGN(ResNet):
         x = self.fc1(x)
         x = self.batch_norm(x)
         x = self.relu(x)
-        endpoints["soft"] = self.fc_soft(x)
+        endpoints["soft"] = [self.fc_soft(x)]
         endpoints["emb"] = self.fc_emb(x)
         return endpoints
 
@@ -133,6 +136,18 @@ def mgn(**kwargs):
     model.load_state_dict(model_dict)
     return model
 
+class DilatedBottleneck(Bottleneck):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, rate=2, dilation=1):
+        super(Bottleneck, self).__init__()
+        print("Dilation before conv1: {}".format(dilation))
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False, dilation=dilation)
+        # This uses stride, after this layer all conv layers need to be dilated.
+        print("Dilation before conv2: {}".format(dilation))
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
+                               padding=1, bias=False, dilation=dilation)
+        dilation = dilation * rate
+        print("Dilation before conv3: {}".format(dilation))
+        self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False, dilation=dilation)
 
 class StrideTest(ResNet):
     """Stride test
@@ -140,6 +155,30 @@ class StrideTest(ResNet):
     Final layer has only stride one.
     """
     
+    def _make_dilated_layer(self, block, planes, blocks, stride=1):
+        """Copied from torchvision/models/resnet.py
+        Adapted to always be follow after layer3
+        """
+
+        # layer3 has 256 * block.expansion output channels
+        inplanes = 256 * block.expansion #here
+        downsample = None
+        if stride != 1 or inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+
+        layers = []
+        # first layer stride changes
+        layers.append(block(inplanes, planes, stride, downsample))
+        for i in range(1, blocks):
+            #block default is stride=1
+            layers.append(block(planes * block.expansion, planes)) #here
+
+        return nn.Sequential(*layers)
+
     def __init__(self, block, layers, num_classes, dim=128, **kwargs):
         """Initializes original ResNet and overwrites fully connected layer."""
 
@@ -147,7 +186,7 @@ class StrideTest(ResNet):
 
         #overwrite self.inplanes which is set by make_layer
         self.inplanes = 256 * block.expansion
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
+        self.layer4 = self._make_dilated_layer(DilatedBottleneck, 512, layers[3], stride=1)
         self.avgpool = nn.AvgPool2d((16, 8))
         self.fc1 = nn.Linear(512 * block.expansion, 1024)
         self.batch_norm = nn.BatchNorm1d(1024)
@@ -156,6 +195,7 @@ class StrideTest(ResNet):
         self.fc_soft = nn.Linear(1024, num_classes)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
+        self.dim = dim
 
     def forward(self, x, endpoints):
         x = self.conv1(x)
@@ -227,17 +267,10 @@ class MGNBranch(nn.Module):
         # this is layer4 of resnet, the 5th convolutional layer
         if parts == 1: # global branch => downsample
             self.final_conv = self._make_layer(block, 512, blocks, stride=2)
-            # TODO dynamic
-            output = (8, 4)
         else:
             self.final_conv = self._make_layer(block, 512, blocks, stride=1)
-            output = (16, 8)
         
 
-        # always do global avg pooling 
-        # each global and part branch after pooling  has a fc
-        # global is 
-        self.g_avg = nn.AvgPool2d(output)
 
         self.g_softmax = nn.Linear(512 * block.expansion, num_classes)
         
@@ -251,11 +284,10 @@ class MGNBranch(nn.Module):
         # for the part branch
 
         if parts > 1:
-            if output[0] % parts != 0:
-                raise RuntimeError("Output feature map height {} has to be dividable by parts (={})!"\
-                        .format(output, parts))
-            self.b_avg = nn.AvgPool2d((output[0]//parts, output[1]))
-            print(self.b_avg)
+            #if output[0] % parts != 0:
+            #    raise RuntimeError("Output feature map height {} has to be dividable by parts (={})!"\
+            #            .format(output, parts))
+            #self.b_avg = nn.AvgPool2d((output[0]//parts, output[1]))
             self.b_1x1 = nn.ModuleList()
             self.b_batch_norm = nn.ModuleList()
             # batch norm learns parameter to estimate during inference
@@ -273,21 +305,26 @@ class MGNBranch(nn.Module):
         # each branch returns one embedding and a number of softmaxe
         #print(x.shape)
         x = self.final_conv(x)
-        g = self.g_avg(x)
-        # TODO this will most likely be overwritten in an parallel enviroment
+        output_shape = x.shape[-2:]
+        g = f.avg_pool2d(x, output_shape)
+        # This seems to be fine in parallel enviroments
         softmax = []
         g = g.view(g.size(0), -1)
         g_softmax = self.g_softmax(g)
         softmax.append(g_softmax)
         
         g = self.g_1x1(g)
-        g = self.g_batch_norm(g)
-        emb = [self.ReLU(g)]
-        
+        #g = self.g_batch_norm(g)
+        #emb = [self.ReLU(g)]
+        emb = [g]
         if self.parts == 1:
             return emb, softmax
-
-        b_avg = self.b_avg(x)
+        
+        # TODO does this return to cpu?
+        if output_shape[0] % self.parts != 0:
+            raise RuntimeError("Outputshape not dividable by parts")
+        b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
+        #b_avg = self.b_avg(x)
         #print(b_avg.shape)
         for p in range(self.parts):
             b = b_avg[:, :, p, :].contiguous().view(b_avg.size(0), -1)
@@ -327,15 +364,30 @@ class MGNAdvanced(ResNet):
     """mgn_1N
     """
 
-    
-    def __init__(self, block, layers, num_classes, dim=256, **kwargs):
+    @property
+    def dim(self):
+        return self._dim * self.num_branches
 
+    def __init__(self, block, layers, mgn_branches, num_classes, dim=256, **kwargs):
+        """Initialize MGN network.
+
+        Args:
+            block: Building block for resnet.
+            layers: Parameter for layer building of resnet.
+            branches (list): Branch configuration. List of parts.
+            num_classes: Number of classes used for softmax layer.
+        """
         super().__init__(block, layers, 1) # 0 classes thows an error
-        print(dim)
-        self.part1 = MGNBranch(1, num_classes, dim, block, layers[3]) 
-        self.part2 = MGNBranch(2, num_classes, dim, block, layers[3])
-        #self.part3 = MGNBranch(4, num_classes, dim, block, layers[3])
+        if len(mgn_branches) == 0:
+            raise RuntimeError("MGN needs at least one branch.")
 
+        self.branches = nn.ModuleList()
+        for branch in mgn_branches:
+            print("Adding branch part-{}.".format(branch))
+            self.branches.append(MGNBranch(branch, num_classes, dim, block, layers[3]))
+        self.num_branches = len(mgn_branches)
+        self._dim = dim
+        print("embedding dim is {}".format(self.dim))
 
     def forward(self, x, endpoints):
         x = self.conv1(x)
@@ -346,16 +398,13 @@ class MGNAdvanced(ResNet):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        
-        emb1, emb2, emb3 = [], [], []
-        softmax1, softmax2, softmax3 = [], [], []
+        emb = []
+        softmax = []
+        for branch in self.branches:
+            e, s = branch(x)
+            emb.extend(e)
+            softmax.extend(s)
 
-        emb1, softmax1 = self.part1(x)
-        emb2, softmax2 = self.part2(x)
-        #emb3, softmax3 = self.part3(x)
-
-        emb = emb1 + emb2 + emb3
-        softmax = softmax1 + softmax2 + softmax3
         emb = torch.cat(emb, dim=1)
         #print(emb.shape)
         endpoints["emb"] = emb
@@ -367,8 +416,7 @@ def mgn_advanced(**kwargs):
     
     https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/2
     """
-
-
+    print("Creating mgn advanced network.")
     model = MGNAdvanced(Bottleneck, [3, 4, 6, 3], **kwargs)
 
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])

@@ -23,13 +23,13 @@ query_csv = os.path.expanduser(args.query)
 data_dir = os.path.expanduser(args.data_dir)
 
 
-gallery_embeddings = write_to_h5(gallery_csv, data_dir, model)
+gallery_embeddings = write_to_h5(gallery_csv, data_dir, model, 6)
 # generated filename is written in stderr, remove some whitecharacters.
 
 if gallery_csv == query_csv:
     query_embeddings = gallery_embeddings
 else:
-    query_embeddings = write_to_h5(query_csv, data_dir, model)
+    query_embeddings = write_to_h5(query_csv, data_dir, model, 6)
 
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
@@ -49,5 +49,8 @@ print(txt_file)
 with open(txt_file, 'w') as f_h:
     print(eval_args)
     print(' '.join(eval_args))
-    task = subprocess.Popen(eval_args, stdout=f_h)
+    task = subprocess.Popen(eval_args, stdout=subprocess.PIPE, universal_newlines=True)
+    for line in task.stdout:
+        sys.stdout.write(line)
+        f_h.write(line)
     task.wait()

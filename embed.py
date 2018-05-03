@@ -6,35 +6,14 @@ import numpy as np
 from csv_dataset import CsvDataset
 from trinet import mgn
 from trinet import trinet
+from trinet import model_parameters
 
 import os
 import h5py
 import sys
 from argparse import ArgumentParser
 import json
-
-
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225])
-
-H = 256
-W = 128
-scale = 1.125
-
-batch_size = 6
-
-to_tensor = transforms.ToTensor()
-
-def to_normalized_tensor(crop):
-    return normalize(to_tensor(crop))
-
-transform_comp = transforms.Compose([
-        transforms.Resize((int(H*scale), int(W*scale))),
-        transforms.TenCrop((H, W)),
-#         transforms.TenCrop((H, W)),
-        transforms.Lambda(lambda crops: torch.stack([to_normalized_tensor(crop) for crop in crops]))
-      ])
-
+import logger as log
 
 def clean_dict(dic):
     """Removes module from keys. For some reason those are added when saving."""
@@ -55,7 +34,7 @@ def extract_csv_name(csv_file):
         return filename
 
 
-def write_to_h5(csv_file, data_dir, model_file, filename=None, output_dir="embed"): 
+def write_to_h5(csv_file, data_dir, model_file, batch_size, filename=None, output_dir="embed"):
 
     experiment = os.path.realpath(model_file).split('/')[-2]
     if filename == None:
@@ -82,16 +61,23 @@ def write_to_h5(csv_file, data_dir, model_file, filename=None, output_dir="embed
     else:
         print("Creating file in %s" % output_file)
 
+    args = load_args(model_file)
+    
+    transform_comp  = restore_transform(args)
+    model           = restore_model(args, model_file)
+
     dataset = CsvDataset(csv_file, data_dir, transform=transform_comp)
 
     dataloader = torch.utils.data.DataLoader(
                 dataset,
                 batch_size
             )
+    
     with h5py.File(output_file) as f_out:
-        emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), 128), dtype=np.float32)
+        #TODO DATA parallel does not return an object with the same attributes! Need to access over .module
+        emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), model.module.dim), dtype=np.float32)
         start_idx = 0
-        for result in create_embeddings(dataloader, model_file):
+        for result in create_embeddings(dataloader, model):
             end_idx = start_idx + len(result)
             emb_dataset[start_idx:end_idx] = result
             start_idx = end_idx
@@ -103,15 +89,15 @@ def get_args_path(model_path):
 
 
 class InferenceModel(object):
-    def __init__(self, model_path, transform=transform_comp, cuda=True):
+    def __init__(self, model_path, cuda=True):
         self.cuda = cuda
 
-        self.transform = transform
-        model = restore_model(model_path)
+        args = load_args(model_path)
+        model = restore_model(args, model_path)
+        self.transform = restore_transform(args)
         if self.cuda:
             model = model.cuda()
         
-        model.eval()
         self.model = model
         self.endpoints = {}
 
@@ -128,17 +114,36 @@ class InferenceModel(object):
         self.endpoints = self.model(data, self.endpoints)
         result = self.endpoints["emb"]
         # mean over crops
-        # TODO
+        # TODO this depends on the data augmentation
         result = result.mean(0)
         return result
 
-def restore_model(model_path):
-    args_path = get_args_path(model_path)
 
-    with open(args_path, 'r') as f_handle:
-        args = json.load(f_handle)
-    
-    model_parameters = {"dim": args["embedding_dim"], "num_classes": args["num_classes"]}
+def restore_transform(args):
+    # TODO unify with training routine
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225])
+
+    H = args["image_height"]
+    W = args["image_width"]
+    scale = args["scale"]
+
+    print(args)
+    to_tensor = transforms.ToTensor()
+
+    def to_normalized_tensor(crop):
+        return normalize(to_tensor(crop))
+
+    transform_comp = transforms.Compose([
+            transforms.Resize((int(H*scale), int(W*scale))),
+            transforms.TenCrop((H, W)),
+            transforms.Lambda(lambda crops: torch.stack([to_normalized_tensor(crop) for crop in crops]))
+        ])
+    return transform_comp
+
+def restore_model(args, model_path):
+       
+    model_parameters.update(args)
     model_module = __import__('trinet')
     model = getattr(model_module, args["model"])
     model = model(**model_parameters)
@@ -146,14 +151,18 @@ def restore_model(model_path):
     state_dict = torch.load(model_path)
     state_dict = clean_dict(state_dict)
     model.load_state_dict(state_dict)
-    return model
-
-def create_embeddings(dataloader, model_path):
-    """Create ten fold embeddings."""
-    
-    model = restore_model(model_path)
     model = torch.nn.DataParallel(model).cuda()
     model.eval()
+    return model
+
+def load_args(model_path):
+    args_path = get_args_path(model_path)
+
+    with open(args_path, 'r') as f_handle:
+        return json.load(f_handle)
+
+def create_embeddings(dataloader, model):
+    """Create ten fold embeddings."""
 
     endpoints = {}
     # this is important, otherwise there might be a race condition
@@ -200,5 +209,5 @@ if __name__ == "__main__":
     csv_file = os.path.expanduser(args.csv_file)
     data_dir = os.path.expanduser(args.data_dir)
     model_dir = os.path.expanduser(args.model)
-    write_to_h5(csv_file, data_dir, model_dir, args.filename, args.output_dir)
+    write_to_h5(csv_file, data_dir, model_dir, 6, args.filename, args.output_dir)
 
