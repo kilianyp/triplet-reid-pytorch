@@ -3,7 +3,7 @@ import subprocess
 import sys
 import os
 from embed import write_to_h5
-
+import gc
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", help="Which dataset to evaluate", required=True)
 parser.add_argument("--model", help="Path to model", required=True)
@@ -46,11 +46,25 @@ file_name =  "{}{}_{}_{}.txt".format(args.prefix, os.path.basename(query_csv), o
 
 txt_file = os.path.join(os.path.dirname(model), file_name)
 print(txt_file)
+# free pytorch memory
+gc.collect()
 with open(txt_file, 'w') as f_h:
-    print(eval_args)
     print(' '.join(eval_args))
     task = subprocess.Popen(eval_args, stdout=subprocess.PIPE, universal_newlines=True)
     for line in task.stdout:
         sys.stdout.write(line)
         f_h.write(line)
     task.wait()
+
+while True:
+    delete = input("Do you want to delete the embedding files? Y/n \n"
+                   "({}|{})".format(query_embeddings, gallery_embeddings))
+    if delete.lower() == "y":
+        os.remove(query_embeddings)
+        os.remove(gallery_embeddings)
+        print("Deleted: {},{}".format(query_embeddings, gallery_embeddings))
+        break
+    elif delete.lower() == 'n':
+            break
+    else:
+        print("Invalid input.")
