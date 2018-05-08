@@ -73,8 +73,9 @@ def write_to_h5(csv_file, data_dir, model_file, batch_size, filename=None, outpu
                 batch_size
             )
     
+    print("Model dimension is {}".format(model.module.dim))
     with h5py.File(output_file) as f_out:
-        #TODO DATA parallel does not return an object with the same attributes! Need to access over .module
+        # Dataparallel class!
         emb_dataset = f_out.create_dataset('emb', shape=(len(dataset), model.module.dim), dtype=np.float32)
         start_idx = 0
         for result in create_embeddings(dataloader, model):
@@ -89,12 +90,12 @@ def get_args_path(model_path):
 
 
 class InferenceModel(object):
-    def __init__(self, model_path, cuda=True):
+    def __init__(self, model_path, transform, cuda=True):
         self.cuda = cuda
 
+        self.transform = transform
         args = load_args(model_path)
         model = restore_model(args, model_path)
-        self.transform = restore_transform(args)
         if self.cuda:
             model = model.cuda()
         
