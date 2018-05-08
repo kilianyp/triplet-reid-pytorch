@@ -110,11 +110,15 @@ def extract_csv_name(csv_file):
     else:
         return filename
 
-def adjust_learning_rate(optimizer, t):
+def adjust_learning_rate(optimizer, epoch):
     global t0, t1, eps0
-    if t <= t0:
-        return eps0
-    lr = eps0 * pow(0.001, (t - t0) / (t1 - t0))
+    if epoch <= 40:
+        lr = 0.01
+    elif epoch <= 60:
+        lr = 1e-3
+    else:
+        lr = 1e-4
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
@@ -208,7 +212,7 @@ model = torch.nn.DataParallel(model).cuda()
 loss_param = {"m": args.margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
-optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
+optimizer = torch.optim.SGD(model.parameters(), lr=eps0, momentum=0.9, weight_decay=5e-4)
 
 t = 1
 
@@ -238,7 +242,8 @@ print("Starting training: %s" % training_name)
 loss_data = {}
 endpoints = {}
 overall_time = time.time()
-while t <= t1:
+num_epochs = 80
+for epoch in range(num_epochs):
     for batch_id, (data, target, path) in enumerate(dataloader):
         start_time = time.time()
         data, target = data.cuda(), target.cuda()
@@ -251,8 +256,8 @@ while t <= t1:
         #alpha = adjust_alpha_rate(loss_fn, t)
         losses = loss_fn(**loss_data)
         loss_mean = torch.mean(losses)
-        lr = adjust_learning_rate(optimizer, t)
         topks = topk(loss_data["dist"], target, 5)
+        lr = adjust_learning_rate(optimizer, epoch)
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
@@ -273,12 +278,13 @@ while t <= t1:
             ))
 
         t += 1
-        if t % 1000 == 0:
+        if t % args.checkpoint_frequency == 0:
             save_pytorch_model(model, t)
         if t >= t1:
             break
 
         #if t % 10 == 0:
 log.close()
+save_pytorch_model(model, t)
 
 print("Finished Training! Took: {:.3f}".format(time.time() - overall_time))
