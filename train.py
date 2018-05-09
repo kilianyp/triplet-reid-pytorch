@@ -204,8 +204,15 @@ model = model(**model_parameters)
 
 model = torch.nn.DataParallel(model).cuda()
 #model = model.cuda()
+try:
+    margin = float(args.margin)
+except ValueError:
+    margin = args.margin
 
-loss_param = {"m": args.margin, "T": args.temp, "a": args.alpha}
+
+    
+
+loss_param = {"m": margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
