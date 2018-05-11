@@ -112,9 +112,9 @@ def extract_csv_name(csv_file):
 
 def adjust_learning_rate(optimizer, epoch):
     global t0, t1, eps0
-    if epoch <= 40:
+    if epoch <= 200:
         lr = 0.01
-    elif epoch <= 60:
+    elif epoch <= 300:
         lr = 1e-3
     else:
         lr = 1e-4
@@ -242,7 +242,7 @@ print("Starting training: %s" % training_name)
 loss_data = {}
 endpoints = {}
 overall_time = time.time()
-num_epochs = 80
+num_epochs = 400
 for epoch in range(num_epochs):
     for batch_id, (data, target, path) in enumerate(dataloader):
         start_time = time.time()
