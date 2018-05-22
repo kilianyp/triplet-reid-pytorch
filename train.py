@@ -181,8 +181,9 @@ W = args.image_width
 scale = args.scale
 transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
-        transforms.Resize((int(H*scale), int(W*scale))),
-        transforms.RandomCrop((H, W)),
+#        transforms.Resize((int(H*scale), int(W*scale))),
+        transforms.Resize((int(H), int(W))),
+#        transforms.RandomCrop((H, W)),
         transforms.ToTensor(),
         normalize
     ])

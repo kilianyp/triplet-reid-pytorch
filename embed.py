@@ -34,22 +34,20 @@ def extract_csv_name(csv_file):
         return filename
 
 
-def write_to_h5(csv_file, data_dir, model_file, batch_size, filename=None, output_dir="embed"):
+def write_to_h5(csv_file, data_dir, model_file, batch_size, prefix=None, output_dir="embed"):
 
     experiment = os.path.realpath(model_file).split('/')[-2]
-    if filename == None:
-        model_name = os.path.basename(model_file)
-        csv_name = extract_csv_name(csv_file)
-        output_file = "%s_%s.h5" % (csv_name, model_name)
-    else:
-        output_file = filename
+    model_name = os.path.basename(model_file)
+    csv_name = extract_csv_name(csv_file)
+    output_file = "%s_%s.h5" % (csv_name, model_name)
+    if prefix is not None:
+        output_file = "{}_{}".format(prefix, output_file)
 
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
     output_dir = os.path.join(output_dir, experiment)
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
-
 
     output_file = os.path.join(os.path.abspath(output_dir), output_file)
     print(output_file)
@@ -119,6 +117,18 @@ class InferenceModel(object):
         result = result.mean(0)
         return result
 
+from PIL import Image
+class Hflip(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, img):
+        flipped = img.transpose(Image.FLIP_LEFT_RIGHT)
+        return (img, flipped)
+
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={})'.format(self.p)
 
 def restore_transform(args):
     # TODO unify with training routine
@@ -140,6 +150,12 @@ def restore_transform(args):
             transforms.TenCrop((H, W)),
             transforms.Lambda(lambda crops: torch.stack([to_normalized_tensor(crop) for crop in crops]))
         ])
+    transform_comp = transforms.Compose([
+            transforms.Resize((int(H), int(W))),
+            Hflip(),
+            transforms.Lambda(lambda flips: torch.stack([to_normalized_tensor(flip) for flip in flips]))
+        ])
+
     return transform_comp
 
 def restore_model(args, model_path):
@@ -173,7 +189,10 @@ def create_embeddings(dataloader, model):
         data = Variable(data).cuda()
         # with cropping there is an additional dimension
         bs, ncrops, c, h, w = data.size()
+        print(ncrops, c, h, w)
+
         endpoints = model(data.view(-1, c, h, w), endpoints)
+        #endpoints = model(data, endpoints)
         result = endpoints["emb"]
         #restore batch and crops dimension and use mean over all crops
         result = result.view(bs, ncrops, -1).mean(1)
