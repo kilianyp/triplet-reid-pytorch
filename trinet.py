@@ -159,7 +159,7 @@ def mgn(**kwargs):
     """
 
 
-    model = MGNv2(Bottleneck, [3, 4, 6, 3], **kwargs)
+    model = MGN(Bottleneck, [3, 4, 6, 3], **kwargs)
 
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
     model_dict = model.state_dict()
@@ -314,8 +314,8 @@ class MGNBranch(nn.Module):
         if parts == 1: # global branch => downsample
             self.final_conv = self._make_layer(block, 512, blocks, stride=2)
         else:
-            # TODO always 2
-            self.final_conv = self._make_layer(block, 512, blocks, stride=2)
+            # TODO stride 1 or 2
+            self.final_conv = self._make_layer(block, 512, blocks, stride=1)
         
         self.i_fc = nn.Linear(512 * block.expansion, 1024)
         
@@ -334,18 +334,15 @@ class MGNBranch(nn.Module):
             #    raise RuntimeError("Output feature map height {} has to be dividable by parts (={})!"\
             #            .format(output, parts))
             #self.b_avg = nn.AvgPool2d((output[0]//parts, output[1]))
-            self.b_1x1 = nn.ModuleList()
-            self.b_batch_norm = nn.ModuleList()
+            self.b_1x1 = nn.Conv2d(512 * block.expansion, dim, 1)
+            # TODO 1 or 2d batchnorm. I think it should not matter as one dimension is 1
+            self.b_batch_norm = nn.BatchNorm2d(dim)
+            self.b_batch_norm.weight.data.fill_(1)
+            self.b_batch_norm.bias.data.zero_()
             # batch norm learns parameter to estimate during inference
             self.b_softmax = nn.ModuleList()
             for part in range(parts):
-                self.b_1x1.append(nn.Linear(512 * block.expansion, dim, 1))
-                b_batch_norm = nn.BatchNorm1d(dim)
-                b_batch_norm.weight.data.fill_(1)
-                b_batch_norm.bias.data.zero_()
-                self.b_batch_norm.append(b_batch_norm)
                 self.b_softmax.append(nn.Linear(dim, num_classes)) # replace fc again with 1x1 conv
-
     
     def forward(self, x):
         # each branch returns one embedding and a number of softmaxe
@@ -367,15 +364,12 @@ class MGNBranch(nn.Module):
         if output_shape[0] % self.parts != 0:
             raise RuntimeError("Outputshape not dividable by parts")
         b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
-        #b_avg = self.b_avg(x)
-        #print(b_avg.shape)
+        b = self.b_1x1(b_avg)
+        b = self.b_batch_norm(b)
+        b = self.relu(b)
         for p in range(self.parts):
-            b = b_avg[:, :, p, :].contiguous().view(b_avg.size(0), -1)
-        #    print(b.shape)
-            b = self.b_1x1[p](b)
-            b = self.b_batch_norm[p](b)
-            b = self.relu(b)
-            b_softmax = self.b_softmax[p](b)
+            b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
+            b_softmax = self.b_softmax[p](b_part)
             softmax.append(b_softmax)
         
         return emb, softmax
@@ -471,7 +465,10 @@ def mgn_advanced(**kwargs):
     # restore branch final conv layer to layer4
     # 
     layer4_dict = {k: v for k, v in pretrained_dict.items() if k.startswith("layer4")}
-    for idx in range(len(model.branches)):
+    for idx, parts in enumerate(model.branches):
+        if parts != 1:
+            # only global branch has stride 2 and can be restored
+            continue
         for key, value in layer4_dict.items():
             new_key = "branches.{}.final_conv.{}".format(idx, key[len("layer4."):])
             pretrained_dict[new_key] = value
