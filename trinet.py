@@ -286,7 +286,7 @@ def stride_test(**kwargs):
 
 
 class MGNBranch(nn.Module):
-    def __init__(self, parts, num_classes, dim, block, blocks):
+    def __init__(self, parts, b3_x, num_classes, dim, block, blocks):
         super().__init__()
         """Creates a new branch. 
 
@@ -302,6 +302,7 @@ class MGNBranch(nn.Module):
              -> avg pool branch -> 1x1 conv -> batch norm -> relu -> fc 256 -> softmax
         Args:
             parts: Number of parts the image should be split into.
+            b3_x: Resnet layer3 after block 1
             num_classes: number of classes for the fc of softmax.
             dim: Reduction dimension, also used for triplet loss as embedding dim.
             downsample: Should the last layer4 downsample (global or part)
@@ -317,15 +318,11 @@ class MGNBranch(nn.Module):
             # TODO stride 1 or 2
             self.final_conv = self._make_layer(block, 512, blocks, stride=1)
         
-        self.i_fc = nn.Linear(512 * block.expansion, 1024)
+        self.g_fc = nn.Linear(2048, num_classes)
         
-        self.i_batch_norm = nn.BatchNorm1d(1024)
-        self.i_batch_norm.weight.data.fill_(1)
-        self.i_batch_norm.bias.data.zero_()
-        self.g_fc = nn.Linear(1024, num_classes)
-        
-        self.g_1x1 = nn.Linear(1024, dim) #1x1 conv
+        self.g_1x1 = nn.Linear(2048, dim) #1x1 conv
         self.relu = nn.ReLU(inplace=True)
+        self.layer3_x = b3_x
 
         # for the part branch
 
@@ -347,13 +344,11 @@ class MGNBranch(nn.Module):
     def forward(self, x):
         # each branch returns one embedding and a number of softmaxe
         #print(x.shape)
+        x = self.layer3_x(x)
         x = self.final_conv(x)
         output_shape = x.shape[-2:]
-        g = f.avg_pool2d(x, output_shape) # functional
+        g = f.max_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
-        g = self.i_fc(g)
-        g = self.i_batch_norm(g)
-        g = self.relu(g)
         # This seems to be fine in parallel enviroments
         softmax = [self.g_fc(g)]
         emb = [self.g_1x1(g)]
@@ -363,7 +358,7 @@ class MGNBranch(nn.Module):
         # TODO does this return to cpu?
         if output_shape[0] % self.parts != 0:
             raise RuntimeError("Outputshape not dividable by parts")
-        b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
+        b_avg = f.max_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
         b = self.b_1x1(b_avg)
         b = self.b_batch_norm(b)
         b = self.relu(b)
@@ -396,7 +391,7 @@ class MGNBranch(nn.Module):
 
         return nn.Sequential(*layers)
 
-
+import copy
 class MGNAdvanced(ResNet):
     """mgn_1N
     """
@@ -417,13 +412,21 @@ class MGNAdvanced(ResNet):
         super().__init__(block, layers, 1) # 0 classes thows an error
         if len(mgn_branches) == 0:
             raise RuntimeError("MGN needs at least one branch.")
+
+        # only parts of layer 3 are in the backbone
+        self.layer3_1 = self.layer3[0]
+        layer3_x = self.layer3[1:]
+
         # explicitly delete layer 4 to avoid confusion when restoring.
+        self.layer3 = None
         self.layer4 = None
         self.fc = None
         self.branches = nn.ModuleList()
         for branch in mgn_branches:
             print("Adding branch part-{}.".format(branch))
-            self.branches.append(MGNBranch(branch, num_classes, dim, block, layers[3]))
+            b3_x = copy.deepcopy(layer3_x)
+            self.branches.append(MGNBranch(branch, b3_x, num_classes,
+                                           dim, block, layers[3]))
         self.num_branches = len(mgn_branches)
         self._dim = dim
         print("embedding dim is {}".format(self.dim))
@@ -436,7 +439,7 @@ class MGNAdvanced(ResNet):
 
         x = self.layer1(x)
         x = self.layer2(x)
-        x = self.layer3(x)
+        x = self.layer3_1(x)
         emb = []
         softmax = []
         for branch in self.branches:
@@ -458,33 +461,47 @@ def mgn_advanced(**kwargs):
     """
     print("Creating mgn advanced network.")
     model = MGNAdvanced(Bottleneck, [3, 4, 6, 3], **kwargs)
-    print(model)
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
     model_dict = model.state_dict()
+    print(model_dict.keys())
+    # resore full layer 3, get keys from layer3.1
+    layer3_dict = {k: v for k, v in pretrained_dict.items() 
+                   if (not k.startswith("layer3.0") and k.startswith("layer3"))}
+
+    for idx, parts in enumerate(model.branches):
+        for key, value in layer3_dict.items():
+            new_key = "branches.{}.layer3_x.{}".format(idx, key[len("layer3."):])
+            #print("{} => {}".format(key, new_key))
+            pretrained_dict[new_key] = value
 
     # restore branch final conv layer to layer4
-    # 
+    # only for layer with stride 2 (as original)
     layer4_dict = {k: v for k, v in pretrained_dict.items() if k.startswith("layer4")}
     for idx, parts in enumerate(model.branches):
         if parts != 1:
             # only global branch has stride 2 and can be restored
+            # restoring with wrong stride has shown to have worse performance.
             continue
         for key, value in layer4_dict.items():
             new_key = "branches.{}.final_conv.{}".format(idx, key[len("layer4."):])
             pretrained_dict[new_key] = value
 
+
     # filter out fully connected keys
-    skips = ["fc", "layer4"]
+    # TODO sometimes we need to skip them, sometimes we do not?
+    skips = ["fc", "layer4", "layer3.1", "layer3.2", "layer3.3", "layer3.4", "layer3.5"]
+    # just for informational purpose
     for skip in skips:
         skipped_values = [k for k in pretrained_dict.keys() if k.startswith(skip)]
         print("Skipping: {}".format(skipped_values))
     
+    #acutally skipping the values
     for skip in skips:
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith(skip)}
     
     
     print("Restoring: {}".format(pretrained_dict.keys()))
-
+ #   print(model)
     # overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
     # load the new state dict
