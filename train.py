@@ -149,7 +149,8 @@ def topk(cdist, pids, k):
     for c in index.split(1, dim=1):
         c = c.squeeze() # c is batch_size x 1
         topk = topk | (pids.data == pids[c].data)
-        acc = torch.sum(topk) / batch_size
+        # topk is uint8, this results in a integer division
+        acc = torch.sum(topk).double() / batch_size
         topks.append(acc)
     return topks
 
@@ -215,7 +216,7 @@ except ValueError:
 loss_param = {"m": margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
-optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
+optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999), amsgrad=False)
 
 t = 1
 
@@ -230,7 +231,6 @@ log = log.create_logger("h5", args.experiment, args.output_path, args.log_level)
 #TODO restoring
 # new experiment
 log.save_args(args)
-
 
 
 # save
@@ -263,7 +263,6 @@ while t <= t1:
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
-
         log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
         log.write("pids", var2num(target), dtype=np.int)
         log.write("file", path, dtype=h5py.special_dtype(vlen=str))
