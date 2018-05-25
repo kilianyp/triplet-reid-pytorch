@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import logger as log
 import numpy as np
 
-choices = ["BatchHard", "BatchSoft", "BatchHardWithSoftmaxLoss"]
+choices = ["BatchHard", "BatchSoft", "BatchHardWithSoftmaxLoss", "BatchHardSingleWithSoftmaxLoss"]
 
 def calc_cdist(a, b, metric='euclidean'):
     diff = a[:, None, :] - b[None, :, :]
@@ -141,6 +141,46 @@ class BatchHardWithSoftmaxLoss(nn.Module):
             return batch_hard_loss
 
 
+class BatchHardSingleWithSoftmaxLoss(nn.Module):
+    """SoftmaxLoss or Softmax Classifier uses the NegativeLogLikelyLoss
+    and the softmax function.
+    The torch implementation of CrossEntropy includes the softmax.
+
+    """
+
+    def __init__(self, m, **kwargs):
+        super().__init__()
+        self.batch_hard = BatchHard(m)
+        self.cross_entropy = nn.CrossEntropyLoss()
+        self.name = "BatchHardSingleWithSoftmax(m={})".format(m)
+
+    def forward(self, dist, pids, endpoints, **kwargs):
+        batch_hard_loss = 0.0
+        bh_losses = []
+
+        for triplet in endpoints["triplet"]:
+            dist = calc_cdist(triplet, triplet)
+            bh = self.batch_hard(dist, pids)
+            batch_hard_loss += bh
+            f_bh = float(var2num(torch.mean(bh)))
+            bh_losses.append(f_bh)
+
+        bh_loss_overall = float(var2num(torch.mean(batch_hard_loss)))
+
+        cross_entropy_loss = 0.0
+        ce_losses = []
+        for softmax in endpoints["soft"]:
+            ce = self.cross_entropy(softmax, pids)
+            cross_entropy_loss += ce
+            f_ce = float(var2num(ce))
+            ce_losses.append(f_ce)
+        
+        ce_loss_overall = float(var2num(cross_entropy_loss))
+        
+        print("bh loss {:.3f} ce loss: {:.3f}".format(bh_loss_overall, ce_loss_overall))
+        loss_info = [bh_loss_overall] + bh_losses + [ce_loss_overall] + ce_losses
+        log.write("loss", loss_info, dtype=np.float32)
+        return batch_hard_loss + cross_entropy_loss
 
 def var2num(x):
     return x.data.cpu().numpy()

@@ -350,10 +350,11 @@ class MGNBranch(nn.Module):
         g = f.max_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
         # This seems to be fine in parallel enviroments
+        triplet = self.g_1x1(g)
+        emb = [triplet]
         softmax = [self.g_fc(g)]
-        emb = [self.g_1x1(g)]
         if self.parts == 1:
-            return emb, softmax
+            return emb, [triplet], softmax
         
         # TODO does this return to cpu?
         if output_shape[0] % self.parts != 0:
@@ -366,8 +367,10 @@ class MGNBranch(nn.Module):
             b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
             b_softmax = self.b_softmax[p](b_part)
             softmax.append(b_softmax)
+            # all the reduced features are concatenated together as the final feature 
+            emb.append(b_part)
         
-        return emb, softmax
+        return emb, [triplet], softmax
 
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -398,7 +401,15 @@ class MGNAdvanced(ResNet):
 
     @property
     def dim(self):
-        return self._dim * self.num_branches
+        """Warning errors in here are not shown in trace!
+        https://github.com/encode/django-rest-framework/issues/2108"""
+        dim = 0
+        for branch in self.num_branches:
+            if branch == 1:
+                dim += self._dim
+            else:
+                dim += self._dim * (1 + branch) #global branch + softmax
+        return dim
 
     def __init__(self, block, layers, mgn_branches, num_classes, dim=256, **kwargs):
         """Initialize MGN network.
@@ -427,7 +438,7 @@ class MGNAdvanced(ResNet):
             b3_x = copy.deepcopy(layer3_x)
             self.branches.append(MGNBranch(branch, b3_x, num_classes,
                                            dim, block, layers[3]))
-        self.num_branches = len(mgn_branches)
+        self.num_branches = mgn_branches
         self._dim = dim
         print("embedding dim is {}".format(self.dim))
 
@@ -441,16 +452,19 @@ class MGNAdvanced(ResNet):
         x = self.layer2(x)
         x = self.layer3_1(x)
         emb = []
+        triplet = []
         softmax = []
         for branch in self.branches:
-            e, s = branch(x)
+            e, t, s = branch(x)
             emb.extend(e)
+            triplet.extend(t)
             softmax.extend(s)
         
         # concatenate embedding
         emb = torch.cat(emb, dim=1)
         #print(emb.shape)
         endpoints["emb"] = emb
+        endpoints["triplet"] = triplet
         endpoints["soft"] = softmax
         return endpoints
 
