@@ -347,7 +347,7 @@ class MGNBranch(nn.Module):
         x = self.layer3_x(x)
         x = self.final_conv(x)
         output_shape = x.shape[-2:]
-        g = f.max_pool2d(x, output_shape) # functional
+        g = f.avg_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
         # This seems to be fine in parallel enviroments
         triplet = self.g_1x1(g)
@@ -359,7 +359,7 @@ class MGNBranch(nn.Module):
         # TODO does this return to cpu?
         if output_shape[0] % self.parts != 0:
             raise RuntimeError("Outputshape not dividable by parts")
-        b_avg = f.max_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
+        b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
         b = self.b_1x1(b_avg)
         b = self.b_batch_norm(b)
         b = self.relu(b)
