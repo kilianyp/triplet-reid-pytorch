@@ -110,15 +110,11 @@ def extract_csv_name(csv_file):
     else:
         return filename
 
-def adjust_learning_rate(optimizer, epoch):
+def adjust_learning_rate(optimizer, t):
     global t0, t1, eps0
-    if epoch <= 300:
-        lr = 0.01
-    elif epoch <= 450:
-        lr = 1e-3
-    else:
-        lr = 1e-4
-
+    if t <= t0:
+        return eps0
+    lr = eps0 * pow(0.001, (t - t0) / (t1 - t0))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
@@ -221,8 +217,7 @@ except ValueError:
 loss_param = {"m": margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
-optimizer = torch.optim.SGD(model.parameters(), lr=eps0, momentum=0.9, weight_decay=5e-4)
-
+optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 t = 1
 
 
@@ -265,7 +260,7 @@ for epoch in range(num_epochs):
         losses = loss_fn(**loss_data)
         loss_mean = torch.mean(losses)
         topks = topk(loss_data["dist"], target, 5)
-        lr = adjust_learning_rate(optimizer, epoch)
+        lr = adjust_learning_rate(optimizer, t)
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
