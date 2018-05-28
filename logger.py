@@ -45,7 +45,9 @@ class Logger(object):
     def save_args(self, args):
         if self.level == 0:
             print_warning("Warning: Not saving arguments because of logging level 0")
-
+        import subprocess
+        label = subprocess.check_output(["git", "describe", "--always"]).strip().decode()
+        args.commit = label
         with open(self.args_file, 'w') as file:
             json.dump(vars(args), file, ensure_ascii=False,
                         indent=2, sort_keys=True)
