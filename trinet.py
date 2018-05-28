@@ -317,10 +317,14 @@ class MGNBranch(nn.Module):
         else:
             # TODO stride 1 or 2
             self.final_conv = self._make_layer(block, 512, blocks, stride=1)
+        self.i_fc = nn.Linear(512 * block.expansion, 1024)
+        self.i_batch_norm = nn.BatchNorm1d(1024)
+        self.i_batch_norm.weight.data.fill_(1)
+        self.i_batch_norm.bias.data.zero_()
+
+        self.g_fc = nn.Linear(1024, num_classes) # for softmax
         
-        self.g_fc = nn.Linear(2048, num_classes)
-        
-        self.g_1x1 = nn.Linear(2048, dim) #1x1 conv
+        self.g_1x1 = nn.Linear(1024, dim) # for triplet
         self.relu = nn.ReLU(inplace=True)
         self.layer3_x = b3_x
 
@@ -349,6 +353,9 @@ class MGNBranch(nn.Module):
         output_shape = x.shape[-2:]
         g = f.avg_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
+        g = self.i_fc(g)
+        g = self.i_batch_norm(g)
+        g = self.relu(g)
         # This seems to be fine in parallel enviroments
         triplet = self.g_1x1(g)
         emb = [triplet]
@@ -491,7 +498,7 @@ def mgn_advanced(**kwargs):
     # restore branch final conv layer to layer4
     # only for layer with stride 2 (as original)
     layer4_dict = {k: v for k, v in pretrained_dict.items() if k.startswith("layer4")}
-    for idx, parts in enumerate(model.branches):
+    for idx, parts in enumerate(model.num_branches):
         if parts != 1:
             # only global branch has stride 2 and can be restored
             # restoring with wrong stride has shown to have worse performance.
