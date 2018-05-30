@@ -325,9 +325,6 @@ class MGNBranch(nn.Module):
         self.g_fc = nn.Linear(1024, num_classes) # for softmax
         
         self.g_1x1 = nn.Linear(1024, dim) # for triplet
-        self.g_batch_norm = nn.BatchNorm1d(dim)
-        self.g_batch_norm.weight.data.fill_(1)
-        self.g_batch_norm.bias.data.zero_()
         self.relu = nn.ReLU(inplace=True)
         self.layer3_x = b3_x
 
@@ -361,9 +358,6 @@ class MGNBranch(nn.Module):
         g = self.relu(g)
         # This seems to be fine in parallel enviroments
         triplet = self.g_1x1(g)
-
-        triplet = self.g_batch_norm(triplet)
-        triplet = self.relu(triplet)
         emb = [triplet]
         softmax = [self.g_fc(g)]
         if self.parts == 1:
@@ -490,8 +484,7 @@ def mgn_advanced(**kwargs):
     model = MGNAdvanced(Bottleneck, [3, 4, 6, 3], **kwargs)
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
     model_dict = model.state_dict()
-    print(model_dict["branches.0.layer3_x.4.bn1.bias"])
-#    print(model_dict.keys())
+    print(model_dict.keys())
     # resore full layer 3, get keys from layer3.1
     layer3_dict = {k: v for k, v in pretrained_dict.items() 
                    if (not k.startswith("layer3.0") and k.startswith("layer3"))}
@@ -499,7 +492,7 @@ def mgn_advanced(**kwargs):
     for idx, parts in enumerate(model.branches):
         for key, value in layer3_dict.items():
             new_key = "branches.{}.layer3_x.{}".format(idx, key[len("layer3."):])
- #           print("{} => {}".format(key, new_key))
+            #print("{} => {}".format(key, new_key))
             pretrained_dict[new_key] = value
 
     # restore branch final conv layer to layer4
@@ -517,12 +510,11 @@ def mgn_advanced(**kwargs):
 
     # filter out fully connected keys
     # TODO sometimes we need to skip them, sometimes we do not?
-#    print(pretrained_dict.keys())
     skips = ["fc", "layer4", "layer3.1", "layer3.2", "layer3.3", "layer3.4", "layer3.5"]
     # just for informational purpose
     for skip in skips:
         skipped_values = [k for k in pretrained_dict.keys() if k.startswith(skip)]
-  #      print("Skipping: {}".format(skipped_values))
+        print("Skipping: {}".format(skipped_values))
     
     #acutally skipping the values
     for skip in skips:
@@ -533,13 +525,8 @@ def mgn_advanced(**kwargs):
  #   print(model)
     # overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
- #   print(model_dict.keys())
     # load the new state dict
     model.load_state_dict(model_dict)
-#    for name, param in model.named_parameters():
-#        print(name)
-    model_dict = model.state_dict()
-    print(model_dict["branches.0.layer3_x.1.bn1.bias"])
     return model
 
 
