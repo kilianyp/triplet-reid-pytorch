@@ -7,7 +7,8 @@ from csv_dataset import CsvDataset
 from trinet import mgn
 from trinet import trinet
 from trinet import model_parameters
-
+from csv_dataset import make_dataset_mot
+from csv_dataset import make_dataset_default
 import os
 import h5py
 import sys
@@ -34,7 +35,7 @@ def extract_csv_name(csv_file):
         return filename
 
 
-def write_to_h5(csv_file, data_dir, model_file, batch_size, prefix=None, output_dir="embed"):
+def write_to_h5(csv_file, data_dir, model_file, batch_size, make_dataset_func, prefix=None, output_dir="embed"):
 
     experiment = os.path.realpath(model_file).split('/')[-2]
     model_name = os.path.basename(model_file)
@@ -64,7 +65,7 @@ def write_to_h5(csv_file, data_dir, model_file, batch_size, prefix=None, output_
     transform_comp  = restore_transform(args)
     model           = restore_model(args, model_file)
 
-    dataset = CsvDataset(csv_file, data_dir, transform=transform_comp)
+    dataset = CsvDataset(csv_file, data_dir, transform=transform_comp, make_dataset_func=make_dataset_func)
 
     dataloader = torch.utils.data.DataLoader(
                 dataset,
@@ -219,6 +220,8 @@ if __name__ == "__main__":
             help="Root dir where the data is stored. This and the paths in the\
             csv file have to result in the correct file path."
             )
+    parser.add_argument(
+            '--mot', action='store_true')
 
     parser.add_argument(
             '--model', required=True,
@@ -229,5 +232,10 @@ if __name__ == "__main__":
     csv_file = os.path.expanduser(args.csv_file)
     data_dir = os.path.expanduser(args.data_dir)
     model_dir = os.path.expanduser(args.model)
-    write_to_h5(csv_file, data_dir, model_dir, 6, args.filename, args.output_dir)
+    if args.mot == True:
+        make_dataset_func = make_dataset_mot
+    else:
+        make_dataset_func = make_dataset_default
+
+    write_to_h5(csv_file, data_dir, model_dir, 6, make_dataset_func, args.filename, args.output_dir) 
 

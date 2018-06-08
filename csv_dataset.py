@@ -35,6 +35,29 @@ def make_dataset_default(csv_file, data_dir, limit):
             
     return imgs
 
+def make_dataset_mot(csv_file, data_dir, limit):
+    """Reads in a csv file according to the scheme "target, path".
+    Args:
+        limit: Number of images that are read in.
+    """
+    imgs = []
+    print(limit)
+    with open(csv_file, 'r') as f:
+        reader = csv.reader(f, delimiter=',')
+        header = next(reader)
+        for id, row in enumerate(reader):
+            if limit is not None and id >= limit:
+                break
+            target = row[7]
+            file_name = row[8]
+            file_dir = os.path.join(data_dir, file_name)
+            if not os.path.isfile(file_dir):
+                warnings.warn("File %s could not be found and is skipped!" % file_dir)
+                continue
+            imgs.append([file_dir, target])
+            
+    return imgs
+
 class CsvDataset(Dataset):
     """Loads data from a csv file."""
 

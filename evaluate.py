@@ -4,6 +4,8 @@ import sys
 import os
 from embed import write_to_h5
 import gc
+from embed import make_dataset_default
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", help="Which dataset to evaluate", required=True)
 parser.add_argument("--model", help="Path to model", required=True)
@@ -23,13 +25,13 @@ query_csv = os.path.expanduser(args.query)
 data_dir = os.path.expanduser(args.data_dir)
 
 
-gallery_embeddings = write_to_h5(gallery_csv, data_dir, model, 4, args.prefix)
+gallery_embeddings = write_to_h5(gallery_csv, data_dir, model, 4, make_dataset_default,  args.prefix)
 # generated filename is written in stderr, remove some whitecharacters.
 
 if gallery_csv == query_csv:
     query_embeddings = gallery_embeddings
 else:
-    query_embeddings = write_to_h5(query_csv, data_dir, model, 4, args.prefix)
+    query_embeddings = write_to_h5(query_csv, data_dir, model, 4, make_dataset_default,  args.prefix)
 
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
