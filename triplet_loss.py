@@ -154,7 +154,7 @@ class BatchHardSingleWithSoftmaxLoss(nn.Module):
         self.cross_entropy = nn.CrossEntropyLoss()
         self.name = "BatchHardSingleWithSoftmax(m={})".format(m)
 
-    def forward(self, dist, pids, endpoints, **kwargs):
+    def forward(self, pids, endpoints, **kwargs):
         batch_hard_loss = 0.0
         bh_losses = []
 
