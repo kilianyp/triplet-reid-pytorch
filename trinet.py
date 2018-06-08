@@ -64,7 +64,7 @@ def trinet(**kwargs):
     return model
 
 class TrinetV2(ResNet):
-    def __init__(self, block, layers, dim=128, **kwargs):
+    def __init__(self, block, layers, num_classes, dim=128, **kwargs):
         """Initializes original ResNet and overwrites fully connected layer."""
 
         super().__init__(block, layers, 1) # 0 classes thows an error
@@ -74,6 +74,12 @@ class TrinetV2(ResNet):
         # reset inplanes
         self.inplanes = 256 * block.expansion
         self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
+        self.soft_1x1 = nn.Linear(2048, 256) # embedding for softmax
+        self.soft_fc = nn.Linear(256, num_classes) # for softmax
+        self.batch_norm = nn.BatchNorm1d(256)
+        self.batch_norm.weight.data.fill_(1)
+        self.batch_norm.bias.data.zero_()
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x, endpoints):
         x = self.conv1(x)
@@ -88,6 +94,11 @@ class TrinetV2(ResNet):
         x = f.avg_pool2d(x, x.size()[2:])
         x = x.view(x.size(0), -1)
         endpoints["emb"] = x
+        endpoints["triplet"] = [x]
+        soft_emb = self.soft_1x1(x)
+        soft_emb = self.batch_norm(soft_emb)
+        soft_emb = self.relu(soft_emb)
+        endpoints["soft"] = [self.soft_fc(soft_emb)]
         return endpoints
 
 def trinetv2(**kwargs):
