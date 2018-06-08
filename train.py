@@ -118,6 +118,20 @@ def adjust_learning_rate(optimizer, t):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
+num_epochs = 300
+def adjust_learning_rate_v2(optimizer, ep):
+    start_decay_at_ep = 151
+    base_lr = 2e-4
+    if ep < start_decay_at_ep:
+        return base_lr
+
+    for g in optimizer.param_groups:
+        lr = base_lr * (0.001 ** (float(ep + 1 - start_decay_at_ep)
+             / (num_epochs + 1 - start_decay_at_ep)))
+        g['lr'] = lr
+    return lr
+
+
 
 def adjust_alpha_rate(loss, t):
     a1 = 5000
@@ -181,9 +195,9 @@ W = args.image_width
 scale = args.scale
 transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
-        transforms.Resize((int(H*scale), int(W*scale))),
-#        transforms.Resize((int(H), int(W))),
-        transforms.RandomCrop((H, W)),
+#        transforms.Resize((int(H*scale), int(W*scale))),
+#        transforms.RandomCrop((H, W)),
+        transforms.Resize((int(H), int(W))),
         transforms.ToTensor(),
         normalize
     ])
@@ -245,8 +259,8 @@ print("Starting training: %s" % training_name)
 loss_data = {}
 endpoints = {}
 overall_time = time.time()
-num_epochs = 600
 for epoch in range(num_epochs):
+    lr = adjust_learning_rate_v2(optimizer, epoch+1)
     for batch_id, (data, target, path) in enumerate(dataloader):
         start_time = time.time()
         data, target = data.cuda(), target.cuda()
@@ -260,7 +274,6 @@ for epoch in range(num_epochs):
         losses = loss_fn(**loss_data)
         loss_mean = torch.mean(losses)
         topks = topk(loss_data["dist"], target, 5)
-        lr = adjust_learning_rate(optimizer, t)
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))

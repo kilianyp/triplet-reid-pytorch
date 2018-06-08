@@ -6,7 +6,7 @@ from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
 import torch.utils.model_zoo as model_zoo
 
-choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test"]
+choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test", "trinetv2"]
 model_parameters = {"dim": None, "num_classes": None, "mgn_branches": None}
 
 class TriNet(ResNet):
@@ -40,7 +40,6 @@ class TriNet(ResNet):
         endpoints["emb"] = x
         return endpoints
 
-
 def trinet(**kwargs):
     """Creates a TriNet network and loads the pretrained ResNet50 weights.
     
@@ -64,6 +63,46 @@ def trinet(**kwargs):
     model.load_state_dict(model_dict)
     return model
 
+class TrinetV2(ResNet):
+    def __init__(self, block, layers, dim=128, **kwargs):
+        """Initializes original ResNet and overwrites fully connected layer."""
+
+        super().__init__(block, layers, 1) # 0 classes thows an error
+
+        self.dim = 2048
+        self.fc = None
+        # reset inplanes
+        self.inplanes = 256 * block.expansion
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
+
+    def forward(self, x, endpoints):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = f.avg_pool2d(x, x.size()[2:])
+        x = x.view(x.size(0), -1)
+        endpoints["emb"] = x
+        return endpoints
+
+def trinetv2(**kwargs):
+    model = TrinetV2(Bottleneck, [3, 4, 6, 3], **kwargs)
+    pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
+    model_dict = model.state_dict()
+
+    # filter out fully connected keys
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("fc")}
+
+    # overwrite entries in the existing state dict
+    model_dict.update(pretrained_dict)
+    # load the new state dict
+    model.load_state_dict(model_dict)
+    return model
 
 class MGN(ResNet):
     """MGN implementaion
