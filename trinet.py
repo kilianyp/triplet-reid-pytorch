@@ -483,7 +483,7 @@ class MGNAdvanced(ResNet):
             raise RuntimeError("MGN needs at least one branch.")
 
         # only parts of layer 3 are in the backbone
-        self.layer3_1 = self.layer3[0]
+        self.layer3_0 = self.layer3[0]
         layer3_x = self.layer3[1:]
 
         # explicitly delete layer 4 to avoid confusion when restoring.
@@ -508,7 +508,7 @@ class MGNAdvanced(ResNet):
 
         x = self.layer1(x)
         x = self.layer2(x)
-        x = self.layer3_1(x)
+        x = self.layer3_0(x)
         emb = []
         triplet = []
         softmax = []
@@ -536,16 +536,27 @@ def mgn_advanced(**kwargs):
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
     model_dict = model.state_dict()
     print(model_dict.keys())
-    # resore full layer 3, get keys from layer3.1
+    print(pretrained_dict.keys())
+
+    layer3_0_dict = {} 
+    for key, value in pretrained_dict.items():
+        if key.startswith("layer3.0"):
+            new_key = "layer3_0.{}".format(key[len("layer3.0."):])
+            print(new_key)
+            layer3_0_dict[new_key] = value
+    
+    # restore full layer 3, get keys from layer3.1
     layer3_dict = {k: v for k, v in pretrained_dict.items() 
                    if (not k.startswith("layer3.0") and k.startswith("layer3"))}
 
     for idx, parts in enumerate(model.branches):
         for key, value in layer3_dict.items():
             new_key = "branches.{}.layer3_x.{}".format(idx, key[len("layer3."):])
-            #print("{} => {}".format(key, new_key))
+            print("{} => {}".format(key, new_key))
             pretrained_dict[new_key] = value
-
+    
+    # delay because layer_3_x otherwise sees those keys TODO clean
+    pretrained_dict.update(layer3_0_dict)
     # restore branch final conv layer to layer4
     # only for layer with stride 2 (as original)
     layer4_dict = {k: v for k, v in pretrained_dict.items() if k.startswith("layer4")}
