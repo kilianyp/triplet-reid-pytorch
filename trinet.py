@@ -69,14 +69,14 @@ class TrinetV2(ResNet):
 
         super().__init__(block, layers, 1) # 0 classes thows an error
 
-        self.dim = 2048
+        self.dim = 256 
         self.fc = None
         # reset inplanes
         self.inplanes = 256 * block.expansion
         self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
-        self.soft_1x1 = nn.Linear(2048, 256) # embedding for softmax
-        self.soft_fc = nn.Linear(256, num_classes) # for softmax
-        self.batch_norm = nn.BatchNorm1d(256)
+        self.reduce_1x1 = nn.Linear(2048, 256) # embedding for trinet
+        self.soft_fc = nn.Linear(2048, num_classes) # for softmax
+        self.batch_norm = nn.BatchNorm1d(2048)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
         self.relu = nn.ReLU(inplace=True)
@@ -93,12 +93,14 @@ class TrinetV2(ResNet):
         x = self.layer4(x)
         x = f.avg_pool2d(x, x.size()[2:])
         x = x.view(x.size(0), -1)
-        endpoints["emb"] = x
-        endpoints["triplet"] = [x]
-        soft_emb = self.soft_1x1(x)
-        soft_emb = self.batch_norm(soft_emb)
-        soft_emb = self.relu(soft_emb)
-        endpoints["soft"] = [self.soft_fc(soft_emb)]
+        soft_emb = self.soft_fc(x)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        triplet = self.reduce_1x1(x)
+        endpoints["triplet"] = [triplet]
+        emb = [triplet]
+        endpoints["emb"] = torch.cat(emb, dim=1)
+        endpoints["soft"] = [soft_emb]
         return endpoints
 
 def trinetv2(**kwargs):
@@ -367,14 +369,14 @@ class MGNBranch(nn.Module):
         else:
             # TODO stride 1 or 2
             self.final_conv = self._make_layer(block, 512, blocks, stride=1)
-        self.i_fc = nn.Linear(512 * block.expansion, 1024)
-        self.i_batch_norm = nn.BatchNorm1d(1024)
-        self.i_batch_norm.weight.data.fill_(1)
-        self.i_batch_norm.bias.data.zero_()
 
-        self.g_fc = nn.Linear(1024, num_classes) # for softmax
+        self.g_batch_norm = nn.BatchNorm1d(2048)
+        self.g_batch_norm.weight.data.fill_(1)
+        self.g_batch_norm.bias.data.zero_()
+
+        self.g_fc = nn.Linear(2048, num_classes) # for softmax
         
-        self.g_1x1 = nn.Linear(1024, dim) # for triplet
+        self.g_1x1 = nn.Linear(2048, dim) # for triplet
         self.relu = nn.ReLU(inplace=True)
         self.layer3_x = b3_x
 
@@ -403,13 +405,12 @@ class MGNBranch(nn.Module):
         output_shape = x.shape[-2:]
         g = f.avg_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
-        g = self.i_fc(g)
-        g = self.i_batch_norm(g)
+        softmax = [self.g_fc(g)]
+        g = self.g_batch_norm(g)
         g = self.relu(g)
         # This seems to be fine in parallel enviroments
         triplet = self.g_1x1(g)
         emb = [triplet]
-        softmax = [self.g_fc(g)]
         if self.parts == 1:
             return emb, [triplet], softmax
         
