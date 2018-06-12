@@ -73,7 +73,7 @@ class TrinetV2(ResNet):
         self.fc = None
         # reset inplanes
         self.inplanes = 256 * block.expansion
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.reduce_1x1 = nn.Linear(2048, 256) # embedding for trinet
         self.soft_fc = nn.Linear(2048, num_classes) # for softmax
         self.batch_norm = nn.BatchNorm1d(2048)
@@ -91,7 +91,7 @@ class TrinetV2(ResNet):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = f.avg_pool2d(x, x.size()[2:])
+        x = f.max_pool2d(x, x.size()[2:])
         x = x.view(x.size(0), -1)
         soft_emb = self.soft_fc(x)
         x = self.batch_norm(x)
