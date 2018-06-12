@@ -6,7 +6,7 @@ from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
 import torch.utils.model_zoo as model_zoo
 
-choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test", "trinetv2"]
+choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test", "trinetv2", "trinetv3"]
 model_parameters = {"dim": None, "num_classes": None, "mgn_branches": None}
 
 class TriNet(ResNet):
@@ -405,9 +405,9 @@ class MGNBranch(nn.Module):
         output_shape = x.shape[-2:]
         g = f.avg_pool2d(x, output_shape) # functional
         g = g.view(g.size(0), -1)
-        softmax = [self.g_fc(g)]
         g = self.g_batch_norm(g)
         g = self.relu(g)
+        softmax = [self.g_fc(g)]
         # This seems to be fine in parallel enviroments
         triplet = self.g_1x1(g)
         emb = [triplet]
