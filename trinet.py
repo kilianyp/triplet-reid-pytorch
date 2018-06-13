@@ -130,9 +130,9 @@ class TrinetV3(ResNet):
         self.fc = None
         # reset inplanes
         self.inplanes = 256 * block.expansion
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
-        self.conv = nn.Conv2d(2048, 2048, (8,4))
-        self.batch_norm = nn.BatchNorm1d(2048)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.conv = nn.Conv2d(2048, 2048, (12, 4))
+        self.batch_norm = nn.BatchNorm2d(2048)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
         self.soft_fc = nn.Linear(2048, num_classes) # for softmax
@@ -151,9 +151,10 @@ class TrinetV3(ResNet):
         x = self.layer4(x)
 
         x = self.conv(x)
-        x = x.view(x.size(0), -1)
         x = self.batch_norm(x)
         x = self.relu(x)
+        print(x.shape)
+        x = x.view(x.size(0), -1)
         soft_emb = self.soft_fc(x)
         triplet = self.reduce_1x1(x)
         endpoints["triplet"] = [triplet]
@@ -175,6 +176,7 @@ def trinetv3(**kwargs):
     # load the new state dict
     model.load_state_dict(model_dict)
     return model
+
 class MGN(ResNet):
     """MGN implementaion
 
@@ -446,7 +448,7 @@ class MGNBranch(nn.Module):
             #self.b_avg = nn.AvgPool2d((output[0]//parts, output[1]))
             self.b_1x1 = nn.Conv2d(512 * block.expansion, dim, 1)
             # TODO 1 or 2d batchnorm. I think it should not matter as one dimension is 1
-            self.b_batch_norm = nn.BatchNorm2d(2048)
+            self.b_batch_norm = nn.BatchNorm2d(dim)
             self.b_batch_norm.weight.data.fill_(1)
             self.b_batch_norm.bias.data.zero_()
             # batch norm learns parameter to estimate during inference
@@ -475,15 +477,15 @@ class MGNBranch(nn.Module):
         if output_shape[0] % self.parts != 0:
             raise RuntimeError("Outputshape not dividable by parts")
         b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
-        b = self.b_batch_norm(b_avg)
+        b = self.b_1x1(b_avg)
+        # all the reduced features are concatenated together as the final feature 
+        emb.append(b.view(b.size(0), -1))
+        b = self.b_batch_norm(b)
         b = self.relu(b)
-        b = self.b_1x1(b)
         for p in range(self.parts):
             b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
             b_softmax = self.b_softmax[p](b_part)
             softmax.append(b_softmax)
-            # all the reduced features are concatenated together as the final feature 
-            emb.append(b_part)
         
         return emb, [triplet], softmax
 
