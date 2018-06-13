@@ -117,6 +117,64 @@ def trinetv2(**kwargs):
     model.load_state_dict(model_dict)
     return model
 
+class TrinetV3(ResNet):
+    """
+    Replace average pooling with conv layer.
+    """
+    def __init__(self, block, layers, num_classes, dim=128, **kwargs):
+        """Initializes original ResNet and overwrites fully connected layer."""
+
+        super().__init__(block, layers, 1) # 0 classes thows an error
+
+        self.dim = 256 
+        self.fc = None
+        # reset inplanes
+        self.inplanes = 256 * block.expansion
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
+        self.conv = nn.Conv2d(2048, 2048, (8,4))
+        self.batch_norm = nn.BatchNorm1d(2048)
+        self.batch_norm.weight.data.fill_(1)
+        self.batch_norm.bias.data.zero_()
+        self.soft_fc = nn.Linear(2048, num_classes) # for softmax
+        self.reduce_1x1 = nn.Linear(2048, 256, bias=False) # embedding for trinet
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x, endpoints):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        x = self.batch_norm(x)
+        x = self.relu(x)
+        soft_emb = self.soft_fc(x)
+        triplet = self.reduce_1x1(x)
+        endpoints["triplet"] = [triplet]
+        emb = [triplet]
+        endpoints["emb"] = torch.cat(emb, dim=1)
+        endpoints["soft"] = [soft_emb]
+        return endpoints
+
+def trinetv3(**kwargs):
+    model = TrinetV3(Bottleneck, [3, 4, 6, 3], **kwargs)
+    pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
+    model_dict = model.state_dict()
+
+    # filter out fully connected keys
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("fc")}
+
+    # overwrite entries in the existing state dict
+    model_dict.update(pretrained_dict)
+    # load the new state dict
+    model.load_state_dict(model_dict)
+    return model
 class MGN(ResNet):
     """MGN implementaion
 
@@ -375,7 +433,6 @@ class MGNBranch(nn.Module):
         self.g_batch_norm.bias.data.zero_()
 
         self.g_fc = nn.Linear(2048, num_classes) # for softmax
-        
         self.g_1x1 = nn.Linear(2048, dim) # for triplet
         self.relu = nn.ReLU(inplace=True)
         self.layer3_x = b3_x
