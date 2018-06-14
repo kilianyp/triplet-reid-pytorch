@@ -131,7 +131,7 @@ class TrinetV3(ResNet):
         # reset inplanes
         self.inplanes = 256 * block.expansion
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.conv = nn.Conv2d(2048, 2048, (12, 4))
+        self.conv = nn.Conv2d(2048, 2048, (12, 4), groups=128)
         self.batch_norm = nn.BatchNorm2d(2048)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
@@ -149,11 +149,9 @@ class TrinetV3(ResNet):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-
         x = self.conv(x)
         x = self.batch_norm(x)
         x = self.relu(x)
-        print(x.shape)
         x = x.view(x.size(0), -1)
         soft_emb = self.soft_fc(x)
         triplet = self.reduce_1x1(x)
@@ -396,6 +394,32 @@ def stride_test(**kwargs):
     return model
 
 
+def make_dilated_layer4(block, planes, blocks):
+    """Copied from torchvision/models/resnet.py
+    Adapted to always be follow after layer3
+    """
+
+    # layer3 has 256 * block.expansion output channels
+    inplanes = 256 * block.expansion #here
+    downsample = None
+    if inplanes != planes * block.expansion:
+        downsample = nn.Sequential(
+            nn.Conv2d(inplanes, planes * block.expansion,
+                        kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(planes * block.expansion),
+        )
+    print(downsample)
+    layers = []
+    # first layer stride changes
+    # after this all have to be dilated
+    layers.append(block(inplanes, planes, stride=1, downsample=downsample,
+                    rate=2, dilation=1))
+    for i in range(1, blocks):
+        #block default is stride=1
+        layers.append(block(planes * block.expansion, planes, dilation=2)) #here
+
+    return nn.Sequential(*layers)
+
 
 class MGNBranch(nn.Module):
     def __init__(self, parts, b3_x, num_classes, dim, block, blocks):
@@ -428,7 +452,8 @@ class MGNBranch(nn.Module):
             self.final_conv = self._make_layer(block, 512, blocks, stride=2)
         else:
             # TODO stride 1 or 2
-            self.final_conv = self._make_layer(block, 512, blocks, stride=1)
+            # dilated layer stride=1
+            self.final_conv = make_dilated_layer4(DilatedBottleneck, 512, blocks)
 
         self.g_batch_norm = nn.BatchNorm1d(2048)
         self.g_batch_norm.weight.data.fill_(1)
@@ -479,9 +504,9 @@ class MGNBranch(nn.Module):
         b_avg = f.avg_pool2d(x, (output_shape[0]//self.parts, output_shape[1]))
         b = self.b_1x1(b_avg)
         # all the reduced features are concatenated together as the final feature 
-        emb.append(b.view(b.size(0), -1))
         b = self.b_batch_norm(b)
         b = self.relu(b)
+        emb.append(b.view(b.size(0), -1))
         for p in range(self.parts):
             b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
             b_softmax = self.b_softmax[p](b_part)
@@ -594,8 +619,8 @@ def mgn_advanced(**kwargs):
     model = MGNAdvanced(Bottleneck, [3, 4, 6, 3], **kwargs)
     pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
     model_dict = model.state_dict()
-    print(model_dict.keys())
-    print(pretrained_dict.keys())
+   # print(model_dict.keys())
+   # print(pretrained_dict.keys())
 
     layer3_0_dict = {} 
     for key, value in pretrained_dict.items():
@@ -620,12 +645,14 @@ def mgn_advanced(**kwargs):
     # only for layer with stride 2 (as original)
     layer4_dict = {k: v for k, v in pretrained_dict.items() if k.startswith("layer4")}
     for idx, parts in enumerate(model.num_branches):
-        if parts != 1:
+        #if parts != 1:
             # only global branch has stride 2 and can be restored
             # restoring with wrong stride has shown to have worse performance.
-            continue
+            #continue
+        #    pass
         for key, value in layer4_dict.items():
             new_key = "branches.{}.final_conv.{}".format(idx, key[len("layer4."):])
+            print("{} => {}".format(key, new_key))
             pretrained_dict[new_key] = value
 
 
@@ -642,7 +669,7 @@ def mgn_advanced(**kwargs):
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith(skip)}
     
     
-    print("Restoring: {}".format(pretrained_dict.keys()))
+   # print("Restoring: {}".format(pretrained_dict.keys()))
  #   print(model)
     # overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
