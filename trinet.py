@@ -505,7 +505,8 @@ class MGNBranch(nn.Module):
         b = self.b_1x1(b_avg)
         # all the reduced features are concatenated together as the final feature 
         b = self.b_batch_norm(b)
-        b = self.relu(b)
+        #b = self.relu(b)
+        b = f.normalize(b, p=2, dim=1) #l2 norm
         emb.append(b.view(b.size(0), -1))
         for p in range(self.parts):
             b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
