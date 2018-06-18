@@ -35,35 +35,13 @@ def extract_csv_name(csv_file):
         return filename
 
 
-def write_to_h5(csv_file, data_dir, model_file, batch_size, make_dataset_func, prefix=None, output_dir="embed"):
+def write_to_h5(csv_file, data_dir, model_file, batch_size,
+                make_dataset_func, augmentation_func, output_file):
 
-    experiment = os.path.realpath(model_file).split('/')[-2]
-    model_name = os.path.basename(model_file)
-    csv_name = extract_csv_name(csv_file)
-    output_file = "%s_%s.h5" % (csv_name, model_name)
-    if prefix is not None:
-        output_file = "{}_{}".format(prefix, output_file)
-
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-    output_dir = os.path.join(output_dir, experiment)
-    if not os.path.isdir(output_dir):
-        os.mkdir(output_dir)
-
-    output_file = os.path.join(os.path.abspath(output_dir), output_file)
-    print(output_file)
-
-    if os.path.isfile(output_file):
-        #TODO create numerated filename
-        print("File %s already exists! Please choose a different name." % output_file)
-        return output_file
-    else:
-        print("Creating file in %s" % output_file)
 
     args = load_args(model_file)
-    
-    transform_comp  = restore_transform(args)
-    model           = restore_model(args, model_file)
+    transform_comp  = restore_transform(args, augmentation_func)
+    model = restore_model(args, model_file)
 
     dataset = CsvDataset(csv_file, data_dir, transform=transform_comp, make_dataset_func=make_dataset_func)
 
@@ -71,7 +49,6 @@ def write_to_h5(csv_file, data_dir, model_file, batch_size, make_dataset_func, p
                 dataset,
                 batch_size
             )
-    
     print("Model dimension is {}".format(model.module.dim))
     with h5py.File(output_file) as f_out:
         # Dataparallel class!
@@ -97,7 +74,6 @@ class InferenceModel(object):
         model = restore_model(args, model_path)
         if self.cuda:
             model = model.cuda()
-        
         self.model = model
         self.endpoints = {}
 
@@ -131,7 +107,7 @@ class Hflip(object):
     def __repr__(self):
         return self.__class__.__name__ + '(p={})'.format(self.p)
 
-def restore_transform(args):
+def restore_transform(args, augmentation):
     # TODO unify with training routine
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                     std=[0.229, 0.224, 0.225])
@@ -143,24 +119,19 @@ def restore_transform(args):
     print(args)
     to_tensor = transforms.ToTensor()
 
+
     def to_normalized_tensor(crop):
         return normalize(to_tensor(crop))
 
     transform_comp = transforms.Compose([
             transforms.Resize((int(H*scale), int(W*scale))),
-            transforms.TenCrop((H, W)),
+            augmentation((H, W)),
             transforms.Lambda(lambda crops: torch.stack([to_normalized_tensor(crop) for crop in crops]))
-        ])
-    transform_comp = transforms.Compose([
-            transforms.Resize((int(H), int(W))),
-            Hflip(),
-            transforms.Lambda(lambda flips: torch.stack([to_normalized_tensor(flip) for flip in flips]))
         ])
 
     return transform_comp
 
 def restore_model(args, model_path):
-       
     model_parameters.update(args)
     model_module = __import__('trinet')
     model = getattr(model_module, args["model"])
@@ -190,8 +161,6 @@ def create_embeddings(dataloader, model):
         data = Variable(data).cuda()
         # with cropping there is an additional dimension
         bs, ncrops, c, h, w = data.size()
-        print(ncrops, c, h, w)
-
         endpoints = model(data.view(-1, c, h, w), endpoints)
         #endpoints = model(data, endpoints)
         result = endpoints["emb"]
@@ -199,6 +168,49 @@ def create_embeddings(dataloader, model):
         result = result.view(bs, ncrops, -1).mean(1)
         print("\rDone (%d/%d)" % (idx, len(dataloader)), flush=True, end='')
         yield  result.data.cpu().numpy()
+
+
+def augment_function_builder(augmentation):
+    def no_augmentation(img):
+        """Returns an iterable to be compatible with cropping augmentations."""
+        return (img, )
+    if augmentation == "TenCrop":
+        return lambda args: transforms.TenCrop(args)
+    elif augmentation == "HorizontalFlipping":
+        return lambda args: Hflip()
+    else:
+        return lambda args: no_augmentation
+
+def run(csv_file, data_dir, model_file, batch_size, make_dataset_func, 
+        augmentation, prefix=None, output_dir="embed"):
+
+    augment_func = augment_function_builder(augmentation)
+
+    experiment = os.path.realpath(model_file).split('/')[-2]
+    model_name = os.path.basename(model_file)
+    csv_name = extract_csv_name(csv_file)
+    output_file = "%s_%s.h5" % (csv_name, model_name)
+    if prefix is not None:
+        output_file = "{}_{}".format(prefix, output_file)
+
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    output_dir = os.path.join(output_dir, experiment)
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+
+    output_file = os.path.join(os.path.abspath(output_dir), output_file)
+    print(output_file)
+
+    if os.path.isfile(output_file):
+        #TODO create numerated filename
+        print("File %s already exists! Please choose a different name." % output_file)
+        return output_file
+    else:
+        print("Creating file in %s" % output_file)
+
+    return write_to_h5(csv_file, data_dir, model_file, batch_size, make_dataset_func,
+                augment_func, output_file)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -208,7 +220,7 @@ if __name__ == "__main__":
             help="Output directory for embedding hd5 file."
             )
     parser.add_argument(
-            '--filename', default=None, 
+            '--filename', default=None,
             help="Output filename")
 
     parser.add_argument(
@@ -221,12 +233,16 @@ if __name__ == "__main__":
             csv file have to result in the correct file path."
             )
     parser.add_argument(
-            '--mot', action='store_true')
+           '--mot', action='store_true')
 
     parser.add_argument(
             '--model', required=True,
             help="Path to state dict of model."
             )
+    parser.add_argument(
+            '--prefix', required=False)
+    parser.add_argument("--augmentation", default=None, choices=["TenCrop", "HorizontalFlipping"])
+    parser.add_argument("--batch_size", default=32, type=int)
     args = parser.parse_args()
 
     csv_file = os.path.expanduser(args.csv_file)
@@ -236,6 +252,7 @@ if __name__ == "__main__":
         make_dataset_func = make_dataset_mot
     else:
         make_dataset_func = make_dataset_default
+    run(csv_file, data_dir, model_dir, args.batch_size, make_dataset_func, 
+        args.augmentation, args.filename, args.output_dir, args.prefix)
 
-    write_to_h5(csv_file, data_dir, model_dir, 6, make_dataset_func, args.filename, args.output_dir) 
 
