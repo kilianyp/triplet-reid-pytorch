@@ -16,7 +16,7 @@ parser.add_argument("--batch_size", help="Batch size", type=str, default="32")
 parser.add_argument("--augmentation", required=True)
 parser.add_argument("--prefix", required=False)
 args = parser.parse_args()
-model = args.model
+model_file = args.model
 
 
 # calculate embeddings
@@ -25,14 +25,14 @@ gallery_csv= os.path.expanduser(args.gallery)
 query_csv = os.path.expanduser(args.query)
 data_dir = os.path.expanduser(args.data_dir)
 
-gallery_embeddings = run(gallery_csv, data_dir, model, 4, 
+gallery_embeddings = run(gallery_csv, data_dir, model_file, 4, 
                          make_dataset_default, args.augmentation, args.prefix)
 # generated filename is written in stderr, remove some whitecharacters.
 
 if gallery_csv == query_csv:
     query_embeddings = gallery_embeddings
 else:
-    query_embeddings = run(query_csv, data_dir, model, 4, make_dataset_default, 
+    query_embeddings = run(query_csv, data_dir, model_file, 4, make_dataset_default, 
                            args.augmentation, args.prefix)
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
 eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
@@ -45,9 +45,9 @@ eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
              "--batch_size", args.batch_size]
 
 
-file_name =  "{}{}_{}_{}.txt".format(args.prefix, os.path.basename(query_csv), os.path.basename(gallery_csv), os.path.basename(model))
+file_name =  "{}{}_{}_{}.txt".format(args.prefix, os.path.basename(query_csv), os.path.basename(gallery_csv), os.path.basename(model_file))
 
-txt_file = os.path.join(os.path.dirname(model), file_name)
+txt_file = os.path.join(os.path.dirname(model_file), file_name)
 print(txt_file)
 # free pytorch memory
 gc.collect()

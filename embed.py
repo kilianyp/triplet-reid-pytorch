@@ -35,20 +35,9 @@ def extract_csv_name(csv_file):
         return filename
 
 
-def write_to_h5(csv_file, data_dir, model_file, batch_size,
-                make_dataset_func, augmentation_func, output_file):
+def write_to_h5(output_file, model, dataloader, dataset):
+    print(len(dataloader), len(dataset))
 
-
-    args = load_args(model_file)
-    transform_comp  = restore_transform(args, augmentation_func)
-    model = restore_model(args, model_file)
-
-    dataset = CsvDataset(csv_file, data_dir, transform=transform_comp, make_dataset_func=make_dataset_func)
-
-    dataloader = torch.utils.data.DataLoader(
-                dataset,
-                batch_size
-            )
     print("Model dimension is {}".format(model.module.dim))
     with h5py.File(output_file) as f_out:
         # Dataparallel class!
@@ -141,7 +130,6 @@ def restore_model(args, model_path):
     state_dict = clean_dict(state_dict)
     model.load_state_dict(state_dict)
     model = torch.nn.DataParallel(model).cuda()
-    model.eval()
     return model
 
 def load_args(model_path):
@@ -157,6 +145,9 @@ def create_embeddings(dataloader, model):
     # this is important, otherwise there might be a race condition
     # which gpu sets emb first => will lead to batch contains only values from one gpu twice
     endpoints["emb"] = None
+    
+    model.eval()
+
     for idx, (data, _, path) in enumerate(dataloader):
         data = Variable(data).cuda()
         # with cropping there is an additional dimension
@@ -200,7 +191,6 @@ def run(csv_file, data_dir, model_file, batch_size, make_dataset_func,
         os.mkdir(output_dir)
 
     output_file = os.path.join(os.path.abspath(output_dir), output_file)
-    print(output_file)
 
     if os.path.isfile(output_file):
         #TODO create numerated filename
@@ -209,8 +199,33 @@ def run(csv_file, data_dir, model_file, batch_size, make_dataset_func,
     else:
         print("Creating file in %s" % output_file)
 
-    return write_to_h5(csv_file, data_dir, model_file, batch_size, make_dataset_func,
-                augment_func, output_file)
+    args = load_args(model_file)
+    transform_comp  = restore_transform(args, augment_func)
+
+    dataset = CsvDataset(csv_file, data_dir, transform=transform_comp, make_dataset_func=make_dataset_func)
+
+    dataloader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size
+            )
+    model = restore_model(args, model_file)
+    if model == None:
+        if False:
+            model.train()
+            endpoints = {}
+            endpoints["emb"] = None
+            print("Starting Warmup...", end='', flush=True)
+            for idx, (data, _, path) in enumerate(dataloader):
+                if idx > 65:
+                    break
+
+                bs, ncrops, c, h, w = data.size()
+                with torch.no_grad():
+                    endpoints = model(data.view(-1, c, h, w), endpoints)
+                #endpoints = model(data, endpoints)
+            print(" Done!")
+
+    return write_to_h5(output_file, model, dataloader, dataset)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
