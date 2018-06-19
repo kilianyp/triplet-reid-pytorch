@@ -64,7 +64,7 @@ parser.add_argument(
         help="Number of training iterations.")
 
 parser.add_argument(
-        '--dim', default=128, type=int,
+        '--dim', required=True, type=int,
         help="Size of the embedding vector."
         )
 parser.add_argument(
@@ -118,6 +118,7 @@ def adjust_learning_rate(optimizer, t):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
+
 num_epochs = 300
 def adjust_learning_rate_v2(optimizer, ep):
     start_decay_at_ep = 151
@@ -129,6 +130,20 @@ def adjust_learning_rate_v2(optimizer, ep):
         lr = base_lr * (0.001 ** (float(ep + 1 - start_decay_at_ep)
              / (num_epochs + 1 - start_decay_at_ep)))
         g['lr'] = lr
+    return lr
+
+#num_epochs = 80
+def adjust_learning_rate_v3(optimizer, epoch):
+    global t0, t1, eps0
+    if epoch <= 40:
+        lr = 0.01
+    elif epoch <= 60:
+        lr = 1e-3
+    else:
+        lr = 1e-4
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
     return lr
 
 
@@ -195,9 +210,8 @@ W = args.image_width
 scale = args.scale
 transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
-#        transforms.Resize((int(H*scale), int(W*scale))),
-#        transforms.RandomCrop((H, W)),
-        transforms.Resize((int(H), int(W))),
+        transforms.Resize((int(H*scale), int(W*scale))),
+        transforms.RandomCrop((H, W)),
         transforms.ToTensor(),
         normalize
     ])
@@ -232,6 +246,8 @@ loss_param = {"m": margin, "T": args.temp, "a": args.alpha}
 
 loss_fn = loss(**loss_param)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
+#optimizer = torch.optim.SGD(model.parameters(), lr=eps0, momentum=0.9, weight_decay=5e-4)
+
 t = 1
 
 

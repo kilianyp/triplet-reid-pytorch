@@ -6,7 +6,7 @@ from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
 import torch.utils.model_zoo as model_zoo
 
-choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test", "trinetv2", "trinetv3"]
+choices = ["trinet", "mgn", "softmax", "mgn_advanced", "stride_test", "trinetv2", "trinetv3", "trinetgithub"]
 model_parameters = {"dim": None, "num_classes": None, "mgn_branches": None}
 
 class TriNet(ResNet):
@@ -56,6 +56,52 @@ def trinet(**kwargs):
     pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("fc")}
     #for key, value in pretrained_dict.items():
     #    print(key)
+
+    # overwrite entries in the existing state dict
+    model_dict.update(pretrained_dict)
+    # load the new state dict
+    model.load_state_dict(model_dict)
+    return model
+
+class TrinetGithub(ResNet):
+    def __init__(self, block, layers, num_classes, dim=128, **kwargs):
+        """Initializes original ResNet and overwrites fully connected layer."""
+
+        super().__init__(block, layers, 1) # 0 classes thows an error
+
+        self.dim = 2048 
+        self.fc = None
+        # reset inplanes
+        self.inplanes = 256 * block.expansion
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.batch_norm = nn.BatchNorm1d(2048)
+        self.batch_norm.weight.data.fill_(1)
+        self.batch_norm.bias.data.zero_()
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x, endpoints):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = f.avg_pool2d(x, x.size()[2:])
+        x = x.view(x.size(0), -1)
+        endpoints["triplet"] = [x]
+        endpoints["emb"] = x
+        return endpoints
+
+def trinetgithub(**kwargs):
+    model = TrinetGithub(Bottleneck, [3, 4, 6, 3], **kwargs)
+    pretrained_dict = model_zoo.load_url(model_urls['resnet50'])
+    model_dict = model.state_dict()
+
+    # filter out fully connected keys
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("fc")}
 
     # overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
@@ -126,17 +172,24 @@ class TrinetV3(ResNet):
 
         super().__init__(block, layers, 1) # 0 classes thows an error
 
-        self.dim = 256 
+        self.dim = dim * 3
         self.fc = None
         # reset inplanes
         self.inplanes = 256 * block.expansion
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.conv = nn.Conv2d(2048, 2048, (12, 4), groups=128)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=1)
         self.batch_norm = nn.BatchNorm2d(2048)
         self.batch_norm.weight.data.fill_(1)
         self.batch_norm.bias.data.zero_()
-        self.soft_fc = nn.Linear(2048, num_classes) # for softmax
-        self.reduce_1x1 = nn.Linear(2048, 256, bias=False) # embedding for trinet
+        self.batch_norm_2 = nn.BatchNorm2d(2048)
+        self.batch_norm_2.weight.data.fill_(1)
+        self.batch_norm_2.bias.data.zero_()
+        self.batch_norm_3 = nn.BatchNorm2d(dim)
+        self.batch_norm_3.weight.data.fill_(1)
+        self.batch_norm_3.bias.data.zero_()
+        self.soft_fc_1 = nn.Linear(dim, num_classes) # for softmax
+        self.soft_fc_2 = nn.Linear(dim, num_classes) # for softmax
+        self.reduce_1x1_1 = nn.Linear(2048, dim, bias=False) # embedding for trineta
+        self.reduce_1x1_2 = nn.Conv2d(2048, dim, 1, bias=False)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x, endpoints):
@@ -149,16 +202,22 @@ class TrinetV3(ResNet):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        x = self.conv(x)
-        x = self.batch_norm(x)
-        x = self.relu(x)
-        x = x.view(x.size(0), -1)
-        soft_emb = self.soft_fc(x)
-        triplet = self.reduce_1x1(x)
+        #x = self.conv(x)
+        g = f.avg_pool2d(x, x.shape[2:])
+        g = self.batch_norm(g)
+        g = g.view(g.size(0), -1)
+        triplet = self.reduce_1x1_1(g)
         endpoints["triplet"] = [triplet]
-        emb = [triplet]
+        b = f.avg_pool2d(x, (x.shape[2] // 2, x.shape[3]))
+        b = self.batch_norm_2(b)
+        b = self.reduce_1x1_2(b)
+        b = self.batch_norm_3(b)
+        b = self.relu(b)
+        emb = [triplet, b.view(b.shape[0], -1)]
+        soft_1 = self.soft_fc_1(b[:, :, 0:1, :].view(b.shape[0], -1))
+        soft_2 = self.soft_fc_2(b[:, :, 1:2, :].view(b.shape[0], -1))
         endpoints["emb"] = torch.cat(emb, dim=1)
-        endpoints["soft"] = [soft_emb]
+        endpoints["soft"] = [soft_1, soft_2]
         return endpoints
 
 def trinetv3(**kwargs):
@@ -168,6 +227,7 @@ def trinetv3(**kwargs):
 
     # filter out fully connected keys
     pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("fc")}
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("layer4")}
 
     # overwrite entries in the existing state dict
     model_dict.update(pretrained_dict)
@@ -505,8 +565,8 @@ class MGNBranch(nn.Module):
         b = self.b_1x1(b_avg)
         # all the reduced features are concatenated together as the final feature 
         b = self.b_batch_norm(b)
-        #b = self.relu(b)
-        b = f.normalize(b, p=2, dim=1) #l2 norm
+        b = self.relu(b)
+        #b = f.normalize(b, p=2, dim=1) #l2 norm
         emb.append(b.view(b.size(0), -1))
         for p in range(self.parts):
             b_part = b[:, :, p, :].contiguous().view(b.size(0), -1)
