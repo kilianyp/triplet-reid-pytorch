@@ -83,13 +83,6 @@ Download Model ([GoogleDrive](https://drive.google.com/open?id=1eNJuLxRz3dJ0MkVj
 
 
 # TODO
-- [] Evaluate current MGN
-- [] Improve logging (Use tensorboard or similar)
-- [] Clean up CPU GPU mess
-
-
-
-
-
-
-    
+- [ ] Evaluate current MGN
+- [ ] Improve logging (Use tensorboard or similar)
+- [ ] Clean up CPU GPU mess
