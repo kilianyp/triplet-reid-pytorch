@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import logger as log
 import numpy as np
 
-choices = ["BatchHard", "BatchSoft", "BatchHardWithSoftmaxLoss", "BatchHardSingleWithSoftmaxLoss"]
+choices = ["BatchHard", "BatchSoft", "BatchHardWithSoftmax", "BatchHardSingleWithSoftmax", "BatchHardWithJunkSigmoid", "BatchHardWithJunkSoftmax"]
 
 def calc_cdist(a, b, metric='euclidean'):
     diff = a[:, None, :] - b[None, :, :]
@@ -108,10 +108,74 @@ class BatchSoft(nn.Module):
         self.m = m
         self.T = T
 
-    def forward(self, dist, pids, **kwargs):
+    def forward(self, dist, pids):
         return batch_soft(dist, pids, self.m, self.T)
 
-class BatchHardWithSoftmaxLoss(nn.Module):
+
+class BatchHardWithJunkSigmoid(nn.Module):
+    def __init__(self, m, num_junk_images, **kwargs):
+        super().__init__()
+        self.name = "BatchHardWithSigmoid(m={}, J={})".format(m, num_junk_images)
+        self.batch_hard = BatchHard(m)
+        self.cross_entropy = nn.BCEWithLogitsLoss(reduce=False)
+        self.num_junk_images = num_junk_images
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, pids, endpoints, **kwargs):
+        # only one triplet embedding is passed
+        triplet = endpoints["triplet"][0]
+        triplet_pids = pids
+        dist = calc_cdist(triplet, triplet)
+        bh_loss = self.batch_hard(dist, triplet_pids)
+        # here is no data parallel anymore
+        targets = torch.zeros_like(pids, dtype=torch.float).unsqueeze(1)
+        targets[-self.num_junk_images:] = 1.0
+        ce_loss = self.cross_entropy(endpoints["junk"], targets)
+        ce_loss_f = float(var2num(torch.mean(ce_loss)))
+        bh_loss_f = float(var2num(torch.mean(bh_loss)))
+        acc = self._calc_junk_acc(endpoints["junk"], targets)
+        print("bh loss {:.3f} ce loss: {:.3f} acc: {:.3f}".format(bh_loss_f, ce_loss_f, acc))
+        log.write("loss", (ce_loss_f, bh_loss_f), dtype=np.float32)
+        return torch.mean(bh_loss) + torch.mean(ce_loss)
+
+    def _calc_junk_acc(self, logits, targets, threshold=0.5):
+        probs = self.sigmoid(logits)
+        predicted = (probs > threshold).float()
+        return torch.sum(targets == predicted).float() / targets.shape[0]
+        
+class BatchHardWithJunkSoftmax(nn.Module):
+    def __init__(self, m, num_junk_images, **kwargs):
+        super().__init__()
+        self.name = "BatchHardWithJunkSoftmax(m={}, J={})".format(m, num_junk_images)
+        self.batch_hard = BatchHard(m)
+        self.cross_entropy = nn.CrossEntropyLoss(reduce=False)
+        self.num_junk_images = num_junk_images
+        self.softmax = nn.Softmax()
+
+    def forward(self, pids, endpoints, **kwargs):
+        triplet = endpoints["triplet"][0][:-self.num_junk_images]
+        triplet_pids = pids[:-self.num_junk_images]
+        dist = calc_cdist(triplet, triplet)
+        bh_loss = self.batch_hard(dist, triplet_pids)
+        # here is no data parallel anymore
+        #class 0  no junk, class 1 junk
+        targets = torch.zeros_like(pids, dtype=torch.long)
+        targets[-self.num_junk_images:] = 1
+        ce_loss = self.cross_entropy(endpoints["junk"], targets)
+        ce_loss_f = float(var2num(torch.mean(ce_loss)))
+        bh_loss_f = float(var2num(torch.mean(bh_loss)))
+        acc = self._calc_junk_acc(endpoints["junk"], targets)
+        print("bh loss {:.3f} ce loss: {:.3f} acc: {:.3f}".format(bh_loss_f, ce_loss_f, acc))
+        log.write("loss", (ce_loss_f, bh_loss_f), dtype=np.float32)
+
+        return torch.mean(bh_loss) + torch.mean(ce_loss)
+
+    def _calc_junk_acc(self, logits, targets, threshold=0.5):
+        predicted = torch.max(logits, dim=1)
+        predicted = predicted[1]
+        return torch.sum(targets == predicted).float() / targets.shape[0]
+
+class BatchHardWithSoftmax(nn.Module):
     """SoftmaxLoss or Softmax Classifier uses the NegativeLogLikelyLoss
     and the softmax function.
     The torch implementation of CrossEntropy includes the softmax.
@@ -141,7 +205,7 @@ class BatchHardWithSoftmaxLoss(nn.Module):
             return batch_hard_loss
 
 
-class BatchHardSingleWithSoftmaxLoss(nn.Module):
+class BatchHardSingleWithSoftmax(nn.Module):
     """SoftmaxLoss or Softmax Classifier uses the NegativeLogLikelyLoss
     and the softmax function.
     The torch implementation of CrossEntropy includes the softmax.

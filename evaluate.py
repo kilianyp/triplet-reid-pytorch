@@ -25,17 +25,21 @@ gallery_csv= os.path.expanduser(args.gallery)
 query_csv = os.path.expanduser(args.query)
 data_dir = os.path.expanduser(args.data_dir)
 
-gallery_embeddings = run(gallery_csv, data_dir, model_file, 4, 
-                         make_dataset_default, args.augmentation, args.prefix)
+gallery_embeddings = run(gallery_csv, data_dir, model_file, 4, False,
+                         make_dataset_default, args.augmentation, ['emb'], args.prefix)
 # generated filename is written in stderr, remove some whitecharacters.
 
 if gallery_csv == query_csv:
     query_embeddings = gallery_embeddings
 else:
-    query_embeddings = run(query_csv, data_dir, model_file, 4, make_dataset_default, 
-                           args.augmentation, args.prefix)
+    query_embeddings = run(query_csv, data_dir, model_file, 4, False, make_dataset_default, 
+                           args.augmentation, ['emb'], args.prefix)
 print("Evaluating query: {}, gallery {}".format(query_csv, gallery_csv))
-eval_args = ["python3", "/home/pfeiffer/Projects/cupsizes/evaluate.py",
+if True:
+    bin = "python3"
+else:
+    bin = "/home/pfeiffer/.pyenv/shims/ipdb3"
+eval_args = [bin, "/home/pfeiffer/Projects/cupsizes/evaluate.py",
              "--dataset", args.dataset,
              "--query_dataset", query_csv,
              "--query_embeddings", query_embeddings,

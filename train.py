@@ -4,25 +4,23 @@ import torchvision.transforms as transforms
 from torch.autograd import Variable
 from csv_dataset import CsvDataset
 
-# Lets cuDNN benchmark conv implementations and choose the fastest.
-# Only good if sizes stay the same within the main loop!
-torch.backends.cudnn.benchmark = True
-
-from triplet_sampler import TripletBatchSampler
-from trinet import choices as model_choices
-from trinet import model_parameters
+from triplet_sampler import TripletBatchSampler, TripletBatchWithJunkSampler
 
 from triplet_loss import choices as loss_choices
 from triplet_loss import calc_cdist
-
+from models import get_model
+from models import model_choices
 import os
 import h5py
 
 from argparse import ArgumentParser
 
 import logger as log
-from logger import save_pytorch_model
 import time
+# Lets cuDNN benchmark conv implementations and choose the fastest.
+# Only good if sizes stay the same within the main loop!
+torch.backends.cudnn.benchmark = True
+
 
 parser = ArgumentParser()
 
@@ -102,6 +100,15 @@ parser.add_argument('--model', required=True, choices=model_choices)
 parser.add_argument('--loss', required=True, choices=loss_choices)
 parser.add_argument('--mgn_branches', required=False, nargs='+', type=int,
         help="Branch configuration for mgn network.")
+parser.add_argument('--J', type=int,
+        help="Number of Junk images sampled.")
+parser.add_argument('--restore_checkpoint', type=int,
+        help="Checkpoint that is to be restored from existing experiment.")
+
+parser.add_argument('--no_multi_gpu', action='store_true', default=False)
+
+parser.add_argument('--sampler', required=True,
+                    choices=["TripletBatchSampler", "TripletBatchWithJunkSampler"])
 
 def extract_csv_name(csv_file):
     filename = os.path.basename(csv_file)
@@ -188,6 +195,7 @@ def var2num(x):
 
 args = parser.parse_args()
 
+
 csv_file = os.path.expanduser(args.csv_file)
 data_dir = os.path.expanduser(args.data_dir)
 
@@ -218,21 +226,60 @@ transform = transforms.Compose([
 dataset = CsvDataset(csv_file, data_dir, transform=transform, limit=args.limit)
 
 print("Loaded %d images" % len(dataset))
+if args.sampler == "TripletBatchSampler":
+    sampler = TripletBatchSampler(args.P, args.K, dataset)
+elif args.sampler == "TripletBatchWithJunkSampler":
+    sampler = TripletBatchWithJunkSampler(args.P, args.K, args.J, dataset)
+else:
+    raise RuntimeError("Unknown sampler")
+
 
 dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_sampler=TripletBatchSampler(args.P, args.K, dataset),
+        batch_sampler=sampler,
         num_workers=4, pin_memory=True
         )
 
 #also save num_labels
-args.num_classes = dataset.num_labels
-model_parameters.update(args.__dict__)
-model_module = __import__('trinet')
-model = getattr(model_module, args.model)
-model = model(**model_parameters)
 
-model = torch.nn.DataParallel(model).cuda()
+args.num_classes = dataset.num_labels
+model, endpoints = get_model(args.__dict__)
+log = log.create_logger("h5", args.experiment, args.output_path, args.log_level)
+if not args.restore_checkpoint is None:
+    from embed import restore_model
+    model_path = log.get_model_path(args.restore_checkpoint)
+    if model_path:
+        model = restore_model(args.__dict__, model_path)
+        print("Model was restored from {}.".format(model_path))
+        t = args.restore_checkpoint
+    else:
+        t = 0
+else:
+    t = 0
+
+import gc
+#print(model)    
+def memReport():
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                print(type(obj), obj.size())
+        except:
+            pass
+
+#memReport()
+def switch_off_running_stats(node):
+    for child in node.children():
+        switch_off_running_stats(child)
+    if type(node) == torch.nn.BatchNorm2d or type(node) == torch.nn.BatchNorm1d:
+        node.track_running_stats = False
+        print("changed", node)
+
+#switch_off_running_stats(model)
+if args.no_multi_gpu:
+    model = model.cuda()
+else:
+    model = torch.nn.DataParallel(model).cuda()
 #model = model.cuda()
 try:
     margin = float(args.margin)
@@ -240,15 +287,13 @@ except ValueError:
     margin = args.margin
 
 
-    
-
-loss_param = {"m": margin, "T": args.temp, "a": args.alpha}
+loss_param = {"m": margin, "T": args.temp,
+              "a": args.alpha, "num_junk_images": args.J}
 
 loss_fn = loss(**loss_param)
 optimizer = torch.optim.Adam(model.parameters(), lr=eps0, betas=(0.9, 0.999))
 #optimizer = torch.optim.SGD(model.parameters(), lr=eps0, momentum=0.9, weight_decay=5e-4)
 
-t = 1
 
 
 training_name = args.experiment + "%s_%s-%s_%d-%d_%f_%d" % (
@@ -256,12 +301,11 @@ training_name = args.experiment + "%s_%s-%s_%d-%d_%f_%d" % (
     str(args.margin), args.P,
     args.K, eps0, args.train_iterations)
 
-log = log.create_logger("h5", args.experiment, args.output_path, args.log_level)
 
-#TODO restoring
 # new experiment
 log.save_args(args)
-
+log.save_description(model)
+log.save_model_file(args.model)
 
 # save
 # logging
@@ -273,9 +317,17 @@ log.save_args(args)
 
 print("Starting training: %s" % training_name)
 loss_data = {}
-endpoints = {}
+#TODO initialize otherwise first batch is wrong
 overall_time = time.time()
+
+def calc_junk_acc(logits, targets, threshold=0.5):
+    predicted = torch.max(logits, dim=1)
+    predicted = predicted[1]
+    return torch.sum(targets == predicted).float() / targets.shape[0]
+
+#model.eval()
 for epoch in range(num_epochs):
+    model = model.train()
     lr = adjust_learning_rate_v2(optimizer, epoch+1)
     for batch_id, (data, target, path) in enumerate(dataloader):
         start_time = time.time()
@@ -293,29 +345,26 @@ for epoch in range(num_epochs):
         min_loss = float(var2num(torch.min(losses)))
         max_loss =  float(var2num(torch.max(losses)))
         mean_loss = float(var2num(loss_mean))
-        log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
+#        log.write("emb", var2num(endpoints["emb"]), dtype=np.float32)
         log.write("pids", var2num(target), dtype=np.int)
         log.write("file", path, dtype=h5py.special_dtype(vlen=str))
         log.write("log", [min_loss, mean_loss, max_loss, lr, topks[0], topks[4]], np.float32)
         optimizer.zero_grad()
         loss_mean.backward()
         optimizer.step()
-        
+#        log.write("batch_norm", var2num(model.module.batch_norm.running_mean))
         took = time.time() - start_time
         print("batch {} loss: {:.3f}|{:.3f}|{:.3f} lr: {:.6f} "
               "top1: {:.3f} top5: {:.3f} | took {:.3f}s".format(
             t, min_loss, mean_loss, max_loss, lr,
             topks[0], topks[4], took
             ))
-
         t += 1
         if t % args.checkpoint_frequency == 0:
-            save_pytorch_model(model, t)
+            log.save_model_state(model, t)
         if t >= t1:
             break
-
-        #if t % 10 == 0:
+log.save_model_state(model, t)
 log.close()
-save_pytorch_model(model, t)
 
 print("Finished Training! Took: {:.3f}".format(time.time() - overall_time))
