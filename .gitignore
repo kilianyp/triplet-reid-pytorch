@@ -102,3 +102,13 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# personal working directories
+datasets/
+tests/
+training/
+embed/
+evaluations/
+
+# Jupyter notebooks are generally just for testing
+notebooks/
