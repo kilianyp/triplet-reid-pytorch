@@ -31,6 +31,18 @@ class TripletBatchSampler(object):
         self.pid2imgs = create_pids2idxs(self.data_source)
 
     def __iter__(self):
+        """Iterator over all images in dataset.
+
+        Picks images accoding to Batch Hard.
+
+        P: #pids in batch
+        K: #images per pid
+        
+        Sorts PIDs randomly and iterates over each pid once.
+        Fills batch by selecting K images for each PID. If expected size
+        is reach, batch is yielded.
+        """
+
         batch = []
         P_perm = np.random.permutation(len(self.pid2imgs))
         for p in P_perm:
