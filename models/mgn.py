@@ -4,8 +4,9 @@ import torch.nn.functional as f
 from torchvision.models.resnet import ResNet
 from torchvision.models.resnet import Bottleneck
 from torchvision.models.resnet import model_urls
-from .dilated import DilatedBottleneck
-from .dilated import make_dilated_layer4
+# TODO does not work if model file is copied and restored
+#from .dilated import DilatedBottleneck
+#from .dilated import make_dilated_layer4
 import torch.utils.model_zoo as model_zoo
 import copy
 
@@ -130,6 +131,9 @@ class MGNBranch(nn.Module):
 class MGN(ResNet):
     """mgn_1N
     """
+    @property
+    def dimensions(self):
+        return {"emb": (self.dim,)}
 
     @property
     def dim(self):
