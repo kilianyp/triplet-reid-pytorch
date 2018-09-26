@@ -46,7 +46,7 @@ If you would like to train using the MGN network, use the following command:
 ```
 python3 train.py --csv_file path/to/ 
                  --data_dir path/to/image/base/directory 
-                 --loss BatchHardWithSoftmax
+                 --loss BatchHardSinlgeWithSoftmax
                  --model mgn
                  --mgn branches 1 2
                  --dim 256
@@ -68,7 +68,7 @@ To calculate the final scores, please use the evaluation script from
 
 # Scores (and pretrained models)              
 ### Market-1501
-
+#### Trinet
 Settings: 
 - P=18 
 - K=4
@@ -82,7 +82,48 @@ Download Model ([GoogleDrive](https://drive.google.com/open?id=1eNJuLxRz3dJ0MkVj
 | With TenCrop |  69.44% | 83.40% | 93.59% | 96.17% |
 
 
+#### MGN
+
+Settings:
+
+```
+  "K": 4,
+  "P": 16,
+  "checkpoint_frequency": 1000,
+  "commit": "c1c1a27",
+  "csv_file": "data/market1501_train.csv",
+  "data_dir": "datasets/Market-1501",
+  "decay_start_iteration": 15000,
+  "dim": 256,
+  "experiment": "new_mgn_123_single",
+  "image_height": 384,
+  "image_width": 128,
+  "log_level": 1,
+  "loss": "BatchHardSingleWithSoftmax",
+  "lr": 0.0003,
+  "margin": "1.2",
+  "mgn_branches": [
+    1,
+    2,
+    3
+  ],
+  "model": "mgn",
+  "no_multi_gpu": false,
+  "num_classes": 751,
+  "output_path": "training",
+  "restore_checkpoint": null,
+  "sampler": "TripletBatchSampler",
+  "scale": 1.0,
+  "train_iterations": 25000
+```
+
+|Experiment| mAP | top-1 | top-5| top-10|
+|---|---:|---:|---:|---:|
+| With Horizontal Flip | 83.17% | top-1: 93.62% | top-5: 97.86% | top-10: 98.66% |
+
+
 # TODO
-- [ ] Evaluate current MGN
+- [x] Evaluate current MGN
+- [ ] Upload MGN model
 - [ ] Improve logging (Use tensorboard or similar)
 - [ ] Clean up CPU GPU mess
