@@ -46,9 +46,9 @@ If you would like to train using the MGN network, use the following command:
 ```
 python3 train.py --csv_file path/to/ 
                  --data_dir path/to/image/base/directory 
-                 --loss BatchHardSinlgeWithSoftmax
+                 --loss BatchHardSingleWithSoftmax
                  --model mgn
-                 --mgn branches 1 2
+                 --mgn branches 1 2 3
                  --dim 256
 ```
 
@@ -66,7 +66,7 @@ python3 embed.py --csv_file path/to/gallery/or/query/csv
 To calculate the final scores, please use the evaluation script from 
 [here](https://github.com/VisualComputingInstitute/triplet-reid#evaluating-embeddings)!
 
-# Scores (and pretrained models)              
+# Scores without Re-rank (and pretrained models) 
 ### Market-1501
 #### Trinet
 Settings: 
@@ -76,9 +76,9 @@ Settings:
 
 Download Model ([GoogleDrive](https://drive.google.com/open?id=1eNJuLxRz3dJ0MkVjoLP6vshxZUn_NLn0))
 
-|Experiment| mAP | top-1 | top-5| top-10|
+|Test time augmentation| mAP | top-1 | top-5| top-10|
 |---|---:|---:|---:|---:|
-| Without TenCrop| 65.06% | 80.31% | 92.25% | 94.71% |
+| None | 65.06% | 80.31% | 92.25% | 94.71% |
 | With TenCrop |  69.44% | 83.40% | 93.59% | 96.17% |
 
 
@@ -117,9 +117,9 @@ Settings:
   "train_iterations": 25000
 ```
 
-|Experiment| mAP | top-1 | top-5| top-10|
+| Test time augmentation | mAP | top-1 | top-5| top-10|
 |---|---:|---:|---:|---:|
-| With Horizontal Flip | 83.17% | top-1: 93.62% | top-5: 97.86% | top-10: 98.66% |
+| With Horizontal Flip | 83.17% | 93.62% | 97.86% | 98.66% |
 
 
 # TODO
